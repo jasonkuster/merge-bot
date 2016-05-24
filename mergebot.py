@@ -1,13 +1,11 @@
 # Mergebot is a program to handle merging approved SCM changes into a master repository.
 
 import glob
-import json
 import mergebot_poller
 import multiprocessing
 import os
 import signal
 import sys
-import time
 import yaml
 
 # poll_scm handles delegating a single repository's work to an SCM poller
