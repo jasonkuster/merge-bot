@@ -27,75 +27,7 @@ ISSUES_URL = GITHUB_REPO_URL + '/issues'
 COMMENT_FMT_URL = ISSUES_URL + '/{pr_num}/comments'
 PULLS_URL = GITHUB_REPO_URL + '/pulls'
 
-bot_key = ''
-
-
-def main():
-  print('Starting up.')
-  # Load github key from filesystem
-  configs = {}
-  for filename in glob.iglob("config/*.json"):
-    with open(filename) as cfg:
-      configs[cfg['name']] = cfg
-  bot_key = ""
-  with open(SECRET_FILE, 'r') as key_file:
-    bot_key = key_file.read().strip()
-  print('Loaded key file.')
-  # Loop: Forever, once per minute.
-  while True:
-    poll_github()
-    time.sleep(60)
-
-def poll_github():
-
-
-def search_pr(pr):
-  pr_num = pr['number']
-  print('Looking at PR #{}.'.format(pr_num))
-  # Load comments for each pull request
-  cmt_url = COMMENT_FMT_URL.format(pr_num=pr_num)
-  print('Loading comments.')
-  r = requests.get(cmt_url, auth=(BOT_NAME, bot_key))
-  if r.status_code != 200:
-    print('Oops, that didn\'t work. Error below, moving on.')
-    print(r.text)
-    return
-
-  cmt_json = r.json()
-  if len(cmt_json) < 1:
-    print('No comments on PR #{}. Moving on.'.format(pr_num))
-    return
-  # FUTURE: Loop over comments to make sure PR has been LGTMed
-  cmt = cmt_json[-1]
-  cmt_body = cmt['body'].encode('ascii', 'ignore')
-  # Look for @apache-beam request comments
-  # FUTURE: Look for @apache-beam reply comments
-  if not cmt_body.startswith('@apache-beam'):
-    print('Last comment: {}, not a command. Moving on.'.format(cmt_body))
-    return
-  cmd_str = cmt_body.split('@apache-beam ', 1)[1]
-  cmd = cmd_str.split(' ')[0]
-  if cmd not in CMDS:
-    # Post back to PR
-    post_error('Command was {}, not a valid command.'.format(cmd), pr_num)
-    print('Command was {}, not a valid command.'.format(cmd))
-    return
-
-  if cmd == 'merge':
-    if cmt['user']['login'] not in AUTHORIZED_USERS:
-      post_error('Unauthorized users cannot merge: {}'.format(cmt['user']['login']))
-      print('Unauthorized user {} attempted to merge PR {}.'.format(cmt['user']['login'], pr_num))
-      return
-    # Kick off merge workflow
-    print('Command was merge, merging.')
-    if merge(pr_num):
-      post_info('Merge of PR#{} succeeded.', pr)
-      if not clean_up():
-        print("cleanup failed; dying.")
-        sys.exit(1)
-
-
-def merge(pr):
+def merge_git(pr):
   if not set_up():
     post_error('Error setting up - please try again.', pr)
     return False
@@ -153,25 +85,6 @@ def merge(pr):
   #  return False
   return True
 
-
-def post_error(content, pr_num):
-  post_pr_comment("Error: {}, #{}.".format(content, pr_num))
-
-
-def post_info(content, pr_num):
-  post_pr_comment("Info: {}, #{}.".format(content, pr_num))
-
-
-def post_pr_comment(content, pr_num):
-  print(content)
-  post(content, COMMENT_FMT_URL.format(pr_num=pr_num))
-
-
-def post(content, endpoint):
-  payload = {"body": content}
-  requests.post(endpoint, data=payload)
-
-
 def set_up():
   if not call(['mkdir', '/usr/local/google/home/jasonkuster/tmp']) == 0:
     return False
@@ -183,6 +96,3 @@ def clean_up():
     return False
   return True
 
-
-if __name__ == "__main__":
-  main()
