@@ -31,7 +31,9 @@ def main():
       except YAMLError as exc:
         print("Error parsing file {}: {}. Continuing with others.".format(fn, exc))
 
-  # Workaround for multiprocessing SIGINT problems
+  # Workaround for multiprocessing SIGINT problems per
+  # http://stackoverflow.com/questions/11312525 and the like. Children need to
+  # ignore SIGINT; parent should obey and clean up itself.
   original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
   pool = multiprocessing.Pool(len(configs))
   signal.signal(signal.SIGINT, original_sigint_handler)
@@ -48,6 +50,9 @@ def main():
     # Generally this shouldn't happen - pollers should run forever.
     pool.close()
     pool.join()
+    # TODO: We could get into a state where we're only polling one repo and all
+    # others have crashed. Once mergebot is functional, work on better poller
+    # management.
     print('Mergebot terminated early - all pollers must have crashed.')
 
 if __name__ == '__main__':
