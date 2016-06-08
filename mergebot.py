@@ -41,7 +41,8 @@ def main():
                 configs.append(config)
             except yaml.YAMLError as exc:
                 print 'Error parsing file {}: {}.'.format(filename, exc)
-                print 'Continuing with others.'
+                print 'Please fix and try again.'
+                return
     # Workaround for multiprocessing SIGINT problems per
     # http://stackoverflow.com/questions/11312525 and the like. Children need to
     # ignore SIGINT; parent should obey and clean up itself.

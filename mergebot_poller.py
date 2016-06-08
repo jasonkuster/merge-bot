@@ -9,7 +9,7 @@ import Queue
 import sys
 from threading import Thread
 import time
-from github_helper import GithubHelper
+import github_helper
 import merge
 
 # TODO(jasonkuster): Fetch authorized users from somewhere official.
@@ -61,7 +61,8 @@ class GithubPoller(MergebotPoller):
         super(GithubPoller, self).__init__(config)
         self.COMMANDS = {'merge': self.merge_git}
         # Set up a github helper for handling network requests, etc.
-        self.github_helper = GithubHelper(ORG, self.config['repository'])
+        self.github_helper = github_helper.GithubHelper(ORG, self.config[
+            'repository'])
 
     def poll(self):
         """Kicks off polling of Github.
@@ -83,16 +84,24 @@ class GithubPoller(MergebotPoller):
             if prs:
                 # Loop: Each pull request
                 for pull in prs:
-                    num = pull.get_num()
-                    if num not in self.known_work.keys() or pull.get_updated() \
-                            != self.known_work.get(num):
-                        print_flush('<PR #{}>'.format(num))
-                        if self.search_github_pr(pull):
-                            self.known_work[num] = pull.get_updated()
-                        print_flush('</PR #{}>'.format(num))
+                    self.check_pr(pull)
             else:
                 print_flush('Error fetching pull requests.')
             time.sleep(15)
+
+    def check_pr(self, pull):
+        """Determines if a pull request should be evaluated.
+
+        Args:
+            pull: A GithubPR object.
+        """
+        num = pull.get_num()
+        if num not in self.known_work.keys() or pull.get_updated() != \
+                self.known_work.get(num):
+            print_flush('<PR #{}>'.format(num))
+            if self.search_github_pr(pull):
+                self.known_work[num] = pull.get_updated()
+            print_flush('</PR #{}>'.format(num))
 
     def search_github_pr(self, pull):
         """Searches a PR for mergebot commands, validates, and runs commands.
@@ -122,8 +131,8 @@ class GithubPoller(MergebotPoller):
         user = cmt.get_user()
         if user not in AUTHORIZED_USERS:
             error = 'User {} not a committer; access denied.'.format(user)
-            print_flush('Unauthorized user {}'.format(user) +
-                        ' attempted command {}.'.format(cmt_body))
+            print_flush('Unauthorized user "{}"'.format(user) +
+                        ' attempted command "{}".'.format(cmt_body))
             if not pull.post_error(error):
                 print_flush('Error posting PR comment.')
                 return False
