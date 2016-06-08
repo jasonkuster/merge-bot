@@ -1,39 +1,35 @@
 #!/usr/bin/python
-"""
-Mergebot is a program to handle merging approved SCM changes into a master
-repository.
+"""Mergebot is a program which merges approved SCM changes into a master repo.
 """
 
 import glob
-import mergebot_poller
 import multiprocessing
 import os
 import signal
 import sys
+import mergebot_poller
 import yaml
 
 
 def poll_scm(config):
-    """
-    poll_scm handles delegating a single repository's work to an SCM poller
+    """poll_scm handles delegating a single repository's work to an SCM poller.
 
-    :param config: A dictionary of configuration to use for the poller.
-    :return: returns nothing
+    Args:
+        config: A dictionary of configuration to use for the poller.
     """
     sys.stdout = open(os.path.join('log', config['name'] + '_log.txt'), 'w')
-    poller = mergebot_poller.MergebotPoller(config)
+    poller = mergebot_poller.create_poller(config)
     poller.poll()
 
 
 def main():
-    """
-    main reads the configs and then kicks off pollers per config file
-    successfully read in.
+    """Reads configs and kicks off pollers.
 
-    :return: returns nothing
+    main reads the configs and then kicks off pollers per config file
+    successfully read in. It then waits for a keyboard interrupt as the
+    signal to shut down itself and its children.
     """
     print 'Mergebot Manager Starting Up'
-
     configs = []
     print 'Parsing Config Files'
     for filename in glob.iglob('config/*.yaml'):
@@ -46,7 +42,6 @@ def main():
             except yaml.YAMLError as exc:
                 print 'Error parsing file {}: {}.'.format(filename, exc)
                 print 'Continuing with others.'
-
     # Workaround for multiprocessing SIGINT problems per
     # http://stackoverflow.com/questions/11312525 and the like. Children need to
     # ignore SIGINT; parent should obey and clean up itself.
@@ -60,7 +55,7 @@ def main():
         while True:
             input('Mergebot running; press Ctrl + C to cancel.\n')
     except KeyboardInterrupt:
-        print "\nExiting."
+        print '\nExiting.'
         pool.terminate()
     else:
         # Generally this shouldn't happen - pollers should run forever.
