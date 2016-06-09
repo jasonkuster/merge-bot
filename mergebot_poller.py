@@ -67,7 +67,8 @@ class GithubPoller(MergebotPoller):
     def poll(self):
         """Kicks off polling of Github.
         """
-        print_flush('Starting merge poller for {}.'.format(self.config['name']))
+        _print_flush('Starting merge poller for {}.'.format(self.config[
+                                                                'name']))
         self.poll_github()
 
     def poll_github(self):
@@ -79,14 +80,8 @@ class GithubPoller(MergebotPoller):
         merger.start()
         # Loop: Forever, every fifteen seconds.
         while True:
-            # Load list of pull requests from Github
-            prs = self.github_helper.fetch_prs()
-            if prs:
-                # Loop: Each pull request
-                for pull in prs:
-                    self.check_pr(pull)
-            else:
-                print_flush('Error fetching pull requests.')
+            for pull in self.github_helper.fetch_prs():
+                self.check_pr(pull)
             time.sleep(15)
 
     def check_pr(self, pull):
@@ -98,10 +93,10 @@ class GithubPoller(MergebotPoller):
         num = pull.get_num()
         if num not in self.known_work.keys() or pull.get_updated() != \
                 self.known_work.get(num):
-            print_flush('<PR #{}>'.format(num))
+            _print_flush('<PR #{}>'.format(num))
             if self.search_github_pr(pull):
                 self.known_work[num] = pull.get_updated()
-            print_flush('</PR #{}>'.format(num))
+            _print_flush('</PR #{}>'.format(num))
 
     def search_github_pr(self, pull):
         """Searches a PR for mergebot commands, validates, and runs commands.
@@ -115,7 +110,7 @@ class GithubPoller(MergebotPoller):
         # Load comments for each pull request
         comments = pull.fetch_comments()
         if not comments:
-            print_flush('No comments. Moving on.')
+            _print_flush('No comments. Moving on.')
             return True
         # FUTURE: Loop over comments to make sure PR has been approved by a
         # committer before a committer requests a merge.
@@ -125,26 +120,26 @@ class GithubPoller(MergebotPoller):
         # FUTURE: Look for @merge-bot reply comments.
         # FUTURE: Use mentions API instead?
         if not cmt_body.startswith('@{}'.format(BOT_NAME)):
-            print_flush('Last comment not a command. Moving on.')
+            _print_flush('Last comment not a command. Moving on.')
             return True
         # Check auth.
         user = cmt.get_user()
         if user not in AUTHORIZED_USERS:
             error = 'User {} not a committer; access denied.'.format(user)
-            print_flush('Unauthorized user "{}"'.format(user) +
-                        ' attempted command "{}".'.format(cmt_body))
+            _print_flush('Unauthorized user "{}"'.format(user) +
+                         ' attempted command "{}".'.format(cmt_body))
             if not pull.post_error(error):
-                print_flush('Error posting PR comment.')
+                _print_flush('Error posting PR comment.')
                 return False
             return True
         cmd_str = cmt_body.split('@{} '.format(BOT_NAME), 1)[1]
         cmd = cmd_str.split(' ')[0]
         if cmd not in self.COMMANDS.keys():
-            print_flush('Command was {}, not a valid command.'.format(cmd))
+            _print_flush('Command was {}, not a valid command.'.format(cmd))
             # Post back to PR
             err = 'Command was {}, not a valid command. Valid commands: {}.'
             if not pull.post_error(err.format(cmd, self.COMMANDS.keys())):
-                print_flush('Error posting PR comment.')
+                _print_flush('Error posting PR comment.')
                 return False
             return True
 
@@ -153,7 +148,7 @@ class GithubPoller(MergebotPoller):
     def merge_git(self, pull):
         """Adds pull request to the list of work.
 
-        merge_git adds the pull request to the list of work, wher it will be
+        merge_git adds the pull request to the list of work, where it will be
         picked up by the concurrently-running merger.
 
         Args:
@@ -162,16 +157,17 @@ class GithubPoller(MergebotPoller):
             True when successfully added. Return value is just to fulfill
             contract with search_github_pr since other commands could fail.
         """
-        print_flush('Command was merge, adding to merge queue.')
+        _print_flush('Command was merge, adding to merge queue.')
         self.work_queue.put(pull)
         return True
 
 
-def print_flush(msg):
+def _print_flush(msg):
     """print_flush ensures stdout is flushed immediately upon printing.
 
     Args:
         msg: The message to print.
     """
+    # TODO(jasonkuster): Move to a logging framework.
     print msg
     sys.stdout.flush()

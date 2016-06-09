@@ -5,6 +5,7 @@ import sys
 import urlparse
 import dateutil.parser
 import requests
+from requests.exceptions import HTTPError, Timeout, RequestException
 
 GITHUB_API_ROOT = 'https://api.github.com'
 GITHUB_REPO_FMT_URL = GITHUB_API_ROOT + '/repos/{0}/{1}/'
@@ -22,7 +23,7 @@ class GithubHelper(object):
         self.repo_url = GITHUB_REPO_FMT_URL.format(org, repo)
         with open(GITHUB_SECRET, 'r') as key_file:
             self.bot_key = key_file.read().strip()
-        print_flush('Loaded key file.')
+        _print_flush('Loaded key file.')
 
     def fetch_prs(self):
         """Gets the PRs for the configured repository.
@@ -31,10 +32,21 @@ class GithubHelper(object):
             An iterable containing instances of GithubPR if successful.
             Empty list otherwise.
         """
-        prs = self.get(GITHUB_PULLS_ENDPOINT)
-        if prs is not None:
+        try:
+            prs = self.get(GITHUB_PULLS_ENDPOINT)
             return [GithubPR(self, pr) for pr in prs]
+        except HTTPError as exc:
+            _print_flush('Non-200 HTTP Code Received:')
+            _print_flush(exc)
+        except Timeout as exc:
+            _print_flush('Request timed out:')
+            _print_flush(exc)
+        except RequestException as exc:
+            _print_flush('Catastrophic error in requests:')
+            _print_flush(exc)
+        _print_flush('Retrieving pull requests failed.')
         return []
+
 
     def get(self, endpoint):
         """get makes a GET request against a specified endpoint.
@@ -44,25 +56,17 @@ class GithubHelper(object):
             to https://api.github.com/repos/{self.org}/{self.repo}/
         Returns:
             JSON object retrieved from the endpoint.
-            None if there are none or an error is received.
+        Raises:
+            HTTPError: if we get an HTTP error status.
+            Timeout: for timeouts.
+            RequestException: for other assorted exceptional cases.
         """
         url = urlparse.urljoin(self.repo_url, endpoint)
-        print_flush('Loading from Github at {}.'.format(url))
-        try:
-            resp = requests.get(url, auth=(BOT_NAME, self.bot_key))
-            if resp.status_code is 200:
-                return resp.json()
-            resp.raise_for_status()
-        except requests.exceptions.HTTPError as exc:
-            print_flush('Non-200 HTTP Code Received:')
-            print_flush(exc)
-        except requests.exceptions.Timeout as exc:
-            print_flush('Request timed out:')
-            print_flush(exc)
-        except requests.exceptions.RequestException as exc:
-            print_flush('Catastrophic error in requests:')
-            print_flush(exc)
-        return None
+        _print_flush('Loading from Github at {}.'.format(url))
+        resp = requests.get(url, auth=(BOT_NAME, self.bot_key))
+        if resp.status_code is 200:
+            return resp.json()
+        resp.raise_for_status()
 
     def post(self, content, endpoint):
         """post makes a POST request against a specified endpoint.
@@ -80,18 +84,20 @@ class GithubHelper(object):
         try:
             resp = requests.post(url, data=payload, auth=(BOT_NAME,
                                                           self.bot_key))
+            # Unlike above, any 2XX status code is valid here - comments,
+            # for example, return 201 CREATED.
             if resp.status_code // 100 is 2:
                 return True
             resp.raise_for_status()
-        except requests.exceptions.HTTPError as exc:
-            print_flush('Non-200 HTTP Code Received:')
-            print_flush(exc)
-        except requests.exceptions.Timeout as exc:
-            print_flush('Request timed out:')
-            print_flush(exc)
-        except requests.exceptions.RequestException as exc:
-            print_flush('Catastrophic error in requests:')
-            print_flush(exc)
+        except HTTPError as exc:
+            _print_flush('Non-200 HTTP Code Received:')
+            _print_flush(exc)
+        except Timeout as exc:
+            _print_flush('Request timed out:')
+            _print_flush(exc)
+        except RequestException as exc:
+            _print_flush('Catastrophic error in requests:')
+            _print_flush(exc)
         return False
 
 
@@ -192,7 +198,7 @@ class GithubComment(object):
         return self.cmt_body
 
 
-def print_flush(msg):
+def _print_flush(msg):
     """print_flush ensures stdout is flushed immediately upon printing.
 
     Args:
