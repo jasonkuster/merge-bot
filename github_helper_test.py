@@ -1,0 +1,92 @@
+import unittest
+import github_helper
+from mock import mock_open, patch, PropertyMock
+import requests
+
+
+class TestGithubHelper(unittest.TestCase):
+
+    def setUp(self):
+        m = mock_open()
+        with patch('{}.open'.format(__name__), m, create=True):
+            self.mocked_helper = github_helper.GithubHelper('none', 'none')
+
+    @patch('github_helper.requests.get')
+    @patch('github_helper.requests')
+    def testGetValidResponse(self, mock_req, mock_req_get):
+        # Tests that Get returns correctly
+        mock_req.get.return_value = mock_req_get
+        type(mock_req_get).status_code = PropertyMock(return_value=200)
+        mock_req_get.json.return_value = 'return'
+        self.assertEqual(self.mocked_helper.get('asdf'), 'return')
+
+    @patch('github_helper.GithubHelper.get')
+    @patch('github_helper.GithubPR')
+    def testFetchPRsEmptyResponse(self, mock_pr, mock_get):
+        # Tests that an empty response returns correctly.
+        mock_get.return_value = []
+        self.mocked_helper.get = mock_get
+        res = self.mocked_helper.fetch_prs()
+        self.assertEqual(res, [])
+
+    @patch('github_helper.GithubHelper.get')
+    @patch('github_helper.GithubPR')
+    def testFetchPRsHTTPError(self, mock_pr, mock_get):
+        # Tests that HTTPErrors are caught correctly.
+        mock_get.side_effect = requests.exceptions.HTTPError
+        self.mocked_helper.get = mock_get
+        res = self.mocked_helper.fetch_prs()
+        self.assertEqual(res, [])
+
+    @patch('github_helper.GithubHelper.get')
+    @patch('github_helper.GithubPR')
+    def testFetchPRsTimeout(self, mock_pr, mock_get):
+        # Tests that timeouts are caught correctly.
+        mock_get.side_effect = requests.exceptions.Timeout
+        self.mocked_helper.get = mock_get
+        res = self.mocked_helper.fetch_prs()
+        self.assertEqual(res, [])
+
+    @patch('github_helper.GithubHelper.get')
+    @patch('github_helper.GithubPR')
+    def testFetchPRsRequestException(self, mock_pr, mock_get):
+        # Tests that RequestExceptions are caught correctly.
+        mock_get.side_effect = requests.exceptions.RequestException
+        self.mocked_helper.get = mock_get
+        res = self.mocked_helper.fetch_prs()
+        self.assertEqual(res, [])
+
+    @patch('github_helper.requests.post')
+    @patch('github_helper.requests')
+    def testPostValidResponse(self, mock_req, mock_req_post):
+        # Tests that a valid POST works.
+        mock_req.post.return_value = mock_req_post
+        type(mock_req_post).status_code = PropertyMock(return_value=200)
+        self.assertTrue(self.mocked_helper.post('asdf', 'ghjkl'))
+
+    @patch('github_helper.requests.post')
+    @patch('github_helper.requests')
+    def testPostHTTPError(self, mock_req, mock_req_post):
+        # Tests that post successfully catches HTTPError.
+        mock_req.get.return_value = mock_req_post
+        type(mock_req_post).status_code = PropertyMock(return_value=400)
+        mock_req.raise_for_status.side_effect = requests.exceptions.HTTPError
+        self.assertFalse( self.mocked_helper.post('asdf', 'ghjkl'))
+
+    @patch('github_helper.requests.post')
+    @patch('github_helper.requests')
+    def testPostTimeout(self, mock_req, mock_req_post):
+        # Tests that post successfully catches Timeout.
+        mock_req.get.return_value = mock_req_post
+        type(mock_req_post).status_code = PropertyMock(return_value=400)
+        mock_req.post.side_effect = requests.exceptions.Timeout
+        self.assertFalse( self.mocked_helper.post('asdf', 'ghjkl'))
+
+    @patch('github_helper.requests.post')
+    @patch('github_helper.requests')
+    def testPostRequestException(self, mock_req, mock_req_post):
+        # Tests that post successfully catches RequestException.
+        mock_req.get.return_value = mock_req_post
+        type(mock_req_post).status_code = PropertyMock(return_value=400)
+        mock_req.post.side_effect = requests.exceptions.RequestException
+        self.assertFalse( self.mocked_helper.post('asdf', 'ghjkl'))
