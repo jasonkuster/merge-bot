@@ -43,6 +43,7 @@ class MergebotPoller(object):
         # Thread-safe because of the GIL.
         self.work_queue = Queue.Queue()
         self.known_work = {}
+        self.merger = merge.create_merger(config, self.work_queue)
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -75,8 +76,7 @@ class GithubPoller(MergebotPoller):
         """Polls Github for PRs, verifies, then searches them for commands.
         """
         # Kick off an SCM merger
-        merger_args = (self.work_queue, self.known_work, self.github_helper,)
-        merger = Thread(target=merge.merge_git, args=merger_args)
+        merger = Thread(target=self.merger.merge)
         merger.start()
         # Loop: Forever, every fifteen seconds.
         while True:
