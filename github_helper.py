@@ -144,33 +144,31 @@ class GithubPR(object):
 
         Args:
             content: the content to post.
-        Returns:
-            True if request completed successfully.
-            False otherwise.
+        Raises:
+            EnvironmentError: If post to Github failed.
         """
-        return self.post_pr_comment('Error: {}.'.format(content))
+        self.post_pr_comment('Error: {}.'.format(content))
 
     def post_info(self, content):
         """Posts an info-level message as a comment to Github.
 
         Args:
             content: the content to post.
-        Returns:
-            True if request completed successfully.
-            False otherwise.
+        Raises:
+            EnvironmentError: If post to Github failed.
         """
-        return self.post_pr_comment('Info: {}.'.format(content))
+        self.post_pr_comment('Info: {}.'.format(content))
 
     def post_pr_comment(self, content):
         """Posts a PR comment to Github.
 
         Args:
             content: the content to post.
-        Returns:
-            True if request completed successfully.
-            False otherwise.
+        Raises:
+            EnvironmentError: If post to Github failed.
         """
-        return self.helper.post(content, self.comments_url)
+        if not self.helper.post(content, self.comments_url):
+            raise EnvironmentError("Couldn't post to Github.")
 
 
 class GithubComment(object):

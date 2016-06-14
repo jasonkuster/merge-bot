@@ -1,19 +1,18 @@
-"""merge contains classes which will merge work into SCM systems.
+"""Contains functions for creating and running mergers for various SCM systems.
+
+The merger interacts with the underlying SCM to patch specific changes, verify
+they work, and then submit.
 """
+import abc
+import os
 import Queue
-from subprocess import call
+from subprocess import check_call
 import sys
 import github_helper
 
-APACHE_URL = 'https://git-wip-us.apache.org/repos/asf/{}.git'
-GITHUB_REPO_URL = 'https://github.com/{}/{}.git'
-TMP_DIR_FMT = '/tmp/{}'
-
-
-GITHUB_ORG = 'apache'
-SOURCE_REMOTE = 'github'
-TARGET_BRANCH = 'master'
-TARGET_REMOTE = 'apache'
+APACHE_GIT = 'https://git-wip-us.apache.org/repos/asf/{repo}.git'
+GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
+TMP_DIR_FMT = '/tmp/{dir}'
 
 
 def create_merger(config, work_queue):
@@ -35,6 +34,7 @@ def create_merger(config, work_queue):
 class Merger(object):
     """Merger is the base class for all mergers.
     """
+    __metaclass__ = abc.ABCMeta
 
     def __init__(self, config, work_queue):
         self.config = config
@@ -43,10 +43,11 @@ class Merger(object):
                                  'Queue.Queue.')
         self.work_queue = work_queue
 
+    @abc.abstractmethod
     def merge(self):
         """merge spins forever, merging things off of the work queue.
         """
-        raise NotImplementedError('merge is required to be implemented.')
+        return
 
 
 class GitMerger(Merger):
@@ -59,12 +60,20 @@ class GitMerger(Merger):
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
+        sys.stdout = open(os.path.join('log', self.config['name'] +
+                                       '_merger_log.txt'), 'w')
         while True:
             pr = self.work_queue.get()
             if not isinstance(pr, github_helper.GithubPR.__class__):
                 raise AttributeError('Expected items in work_queue to be of '
                                      'type github_helper.GithubPR')
-            self.merge_git_pr(pr)
+            _print_flush('Starting merge process for #{}.'.format(pr.get_num()))
+            if self.merge_git_pr(pr):
+                _print_flush('Merge concluded satisfactorily. Moving on.')
+            else:
+                _print_flush('Merge did not conclude satisfactorily. Adding '
+                             'PR back to queue to be tried again.')
+                self.work_queue.put(pr)
 
     def merge_git_pr(self, pr):
         """merge_git_pr merges git pull requests.
@@ -72,90 +81,205 @@ class GitMerger(Merger):
         Args:
             pr: The GithubPR to merge.
         Returns:
-            True if merging was successful.
-            False otherwise.
+            True if merge was concluded satisfactorily (merged successfully,
+            or failed due to supposed fault of the PR itself).
+            False if failure was due to an environmental issue and should be
+            retried.
         """
         repo = self.config['repository']
-        tmp_dir = TMP_DIR_FMT.format('{}-{}'.format(repo, pr.get_num()))
-        if not set_up(tmp_dir):
-            pr.post_error('Error setting up - please try again.')
+        tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(repo, pr.get_num()))
+        try:
+            _set_up(tmp_dir)
+        except AssertionError:
+            pr.post_error('Error setting up - trying again.')
             return False
+        try:
+            self.clone_configure(tmp_dir, pr)
+            pr_name = 'finish-pr-{}'.format(pr.get_num())
+            self.checkout(pr_name, tmp_dir, pr)
+            branch = '{}/{}'.format('apache', self.config['merge_branch'])
+            self.rebase(branch, tmp_dir, pr)
+            self.target_checkout(branch, tmp_dir, pr)
+            self.do_local_merge(pr_name, tmp_dir, pr)
+            self.verify(tmp_dir, pr)
+            self.push(tmp_dir, pr)
+            _clean_up(tmp_dir)
+            _print_flush('Merged successfully!')
+        except AssertionError as err:
+            _print_flush(err)
+        except EnvironmentError as err:
+            _print_flush(err)
+            return False
+        return True
 
-        # Clone repository and configure.
-        _print_flush('Starting merge process for #{}.'.format(pr))
-        repo_url = GITHUB_REPO_URL.format(GITHUB_ORG, repo)
-        clone_args = ['git', 'clone', '-b', TARGET_BRANCH, repo_url, tmp_dir]
-        clone_success = call(clone_args, cwd=tmp_dir)
-        if clone_success != 0:
+    def clone_configure(self, tmp_dir, pr):
+        """Clone repository and configure.
+
+        Args:
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Cloning repository and configuring.')
+        repo = self.config['repository']
+        repo_url = GITHUB_REPO_URL.format(org='apache', repo=repo)
+        clone_args = ['git', 'clone', '-b', self.config['merge_branch'],
+                      repo_url, tmp_dir]
+        try:
+            check_call(clone_args, cwd=tmp_dir)
+        except:
             pr.post_error(
                 'Couldn\'t clone from github/{}/{}. Please try again.'.format(
-                    GITHUB_ORG, repo))
-            return False
+                    'apache', repo))
+            raise AssertionError('Clone Failed.')
 
-        call(['git', 'remote', 'add', TARGET_REMOTE, APACHE_URL.format(repo)],
-             cwd=tmp_dir)
-        call(['git', 'remote', 'rename', 'origin', SOURCE_REMOTE], cwd=tmp_dir)
-        call('git config --local --add remote.' + SOURCE_REMOTE +
-             '.fetch "+refs/pull/*/head:refs/remotes/{}/pr/*"'.format(
-                 SOURCE_REMOTE), shell=True,
-             cwd=tmp_dir)
-        call(['git', 'fetch', '--all'], cwd=tmp_dir)
-        _print_flush('Initial work complete.')
+        try:
+            check_call(['git', 'remote', 'add', 'apache',
+                        APACHE_GIT.format(repo=repo)], cwd=tmp_dir)
+            check_call(['git', 'remote', 'rename', 'origin', 'github'],
+                       cwd=tmp_dir)
+            check_call('git config --local --add remote.github.fetch'
+                       ' "+refs/pull/*/head:refs/remotes/github/pr/*"',
+                       shell=True, cwd=tmp_dir)
+            check_call(['git', 'fetch', '--all'], cwd=tmp_dir)
+        except:
+            pr.post_error('Problem configuring repository. Please try again.')
+            raise AssertionError('Failed to set up.')
+        _print_flush('Initial configuration complete.')
 
-        # Clean up fetch
-        pr_name = 'finish-pr-{}'.format(pr)
-        ic_args = ['git', 'checkout', '-b', pr_name, 'github/pr/{}'.format(pr)]
-        initial_checkout = call(ic_args, cwd=tmp_dir)
-        if initial_checkout != 0:
+    def checkout(self, pr_name, tmp_dir, pr):
+        """Check out PR from Github.
+
+        Args:
+            pr_name: Name of pull request branch.
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Checking out PR.')
+        pr_num = pr.get_num()
+        ic_args = ['git', 'checkout', '-b', pr_name, 'github/pr/{}'.format(
+            pr_num)]
+        try:
+            check_call(ic_args, cwd=tmp_dir)
+        except:
             pr.post_error("Couldn't checkout code. Please try again.")
-            return False
+            raise AssertionError('Failed to check out PR.')
         _print_flush('Checked out.')
 
-        # Rebase PR onto main.
-        branch = '{}/{}'.format(TARGET_REMOTE, TARGET_BRANCH)
-        rebase_args = ['git', 'rebase', branch]
-        rebase_success = call(rebase_args, cwd=tmp_dir)
-        if rebase_success != 0:
-            _print_flush(rebase_success)
-            pr.post_error('Rebase was not successful. Please rebase against '
-                          'main and try again.')
-            return False
-        _print_flush('Rebased')
+    def rebase(self, branch, tmp_dir, pr):
+        """Rebase PR onto main.
 
-        # Check out target branch to here
-        checkout_success = call(['git', 'checkout', branch], cwd=tmp_dir)
-        if checkout_success != 0:
+        Args:
+            branch: Path to branch.
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Rebasing onto main.')
+        rebase_args = ['git', 'rebase', branch]
+        try:
+            check_call(rebase_args, cwd=tmp_dir)
+        except:
+            pr.post_error('Automatic rebase was not successful. Please rebase '
+                          'against main and try again.')
+            raise AssertionError('Failed to rebase.')
+        _print_flush('Rebased successfully.')
+
+    def target_checkout(self, branch, tmp_dir, pr):
+        """Check out target branch to here.
+
+        Args:
+            branch: Path to branch.
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Checking out target branch.')
+        try:
+            check_call(['git', 'checkout', branch], cwd=tmp_dir)
+        except:
             pr.post_error(
                 'Error checking out target branch: master. Please try again.')
-            return False
-        _print_flush('Checked out Apache master.')
+            raise AssertionError('Failed to check out target branch.')
+        _print_flush('Checked out target branch.')
 
-        # Merge
-        merge_msg = 'This closes #{}'.format(pr)
+    def do_local_merge(self, pr_name, tmp_dir, pr):
+        """Merge the pull request locally.
+
+        Args:
+            pr_name: Name of pull request branch.
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Merging.')
+        merge_msg = 'This closes #{}'.format(pr.get_num())
         merge_args = ['git', 'merge', '--no-ff', '-m', merge_msg, pr_name]
-        merge_success = call(merge_args, cwd=tmp_dir)
-        if merge_success != 0:
+        try:
+            check_call(merge_args, cwd=tmp_dir)
+        except:
             pr.post_error(
                 'Merge was not successful against target branch: master. '
                 'Please try again.')
-            return False
+            raise AssertionError('Local merge failed.')
         _print_flush('Merged successfully.')
 
-        _print_flush('Running mvn clean verify.')
-        # mvn clean verify
-        mvn_success = call(['mvn', 'clean', 'verify'], cwd=tmp_dir)
-        if mvn_success != 0:
-            pr.post_error(
-                'verify against HEAD + PR#{} failed. Not merging.'.format(pr))
-            return False
+    def verify(self, tmp_dir, pr):
+        """Runs the verify step.
 
-        # git push
-        push_args = ['git', 'push', 'apache', 'HEAD:master']
-        push_success = call(push_args, cwd=tmp_dir)
-        if push_success != 0:
+        Args:
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Running verify step.')
+        try:
+            check_call(['mvn', 'clean', 'verify'], cwd=tmp_dir)
+        except:
+            pr.post_error(
+                'verify against HEAD + PR#{} failed. Not merging.'.format(
+                    pr.get_num()))
+            raise AssertionError('Verify step failed.')
+        _print_flush('Verified successfully.')
+
+    def push(self, tmp_dir, pr):
+        """Runs the push step.
+
+        Args:
+            tmp_dir: Directory in which commands should be run.
+            pr: Pull request to merge.
+        Raises:
+            AssertionError: If command was not successful.
+            EnvironmentError: If PR comment couldn't be posted to Github.
+        """
+        _print_flush('Pushing pull request.')
+        push_args = ['git', 'push', 'apache', 'HEAD:{}'.format(
+            self.config['merge_branch'])]
+        try:
+            check_call(push_args, cwd=tmp_dir)
+        except:
             pr.post_error('Git push failed. Please try again.')
-            return False
-        return True
+            raise AssertionError('Push failed.')
+        try:
+            pr.post_info('Pull request successfully merged.')
+        except EnvironmentError as err:
+            _print_flush("Merge was successful but we couldn't update "
+                         "Github. Moving on since there's no better option.")
+            _print_flush(err)
+        _print_flush('Pull request pushed successfully.')
 
 
 def _set_up(tmp_dir):
@@ -163,13 +287,13 @@ def _set_up(tmp_dir):
 
     Args:
         tmp_dir: Directory to create.
-    Returns:
-        True if directory was created successfully.
-        False otherwise.
+    Raises:
+        AssertionError: If command was not successful.
     """
-    if call(['mkdir', tmp_dir]) != 0:
-        return False
-    return True
+    try:
+        check_call(['mkdir', tmp_dir])
+    except:
+        raise AssertionError('Setup failed.')
 
 
 def _clean_up(tmp_dir):
@@ -177,13 +301,13 @@ def _clean_up(tmp_dir):
 
     Args:
         tmp_dir: Directory to remove.
-    Returns:
-        True if directory was removed successfully.
-        False otherwise.
+    Raises:
+        AssertionError: If command was not successful.
     """
-    if call(['rm', '-rf', tmp_dir]) != 0:
-        return False
-    return True
+    try:
+        check_call(['rm', '-rf', tmp_dir])
+    except:
+        raise AssertionError('Cleanup failed.')
 
 
 def _print_flush(msg):

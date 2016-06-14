@@ -5,9 +5,8 @@ inherit and a create_poller method which allows creation of SCM pollers.
 """
 
 
-import Queue
+from multiprocessing import Process, Queue
 import sys
-from threading import Thread
 import time
 import github_helper
 import merge
@@ -41,7 +40,7 @@ class MergebotPoller(object):
         self.config = config
         # Instantiate the two variables used for tracking work.
         # Thread-safe because of the GIL.
-        self.work_queue = Queue.Queue()
+        self.work_queue = Queue()
         self.known_work = {}
         self.merger = merge.create_merger(config, self.work_queue)
 
@@ -76,8 +75,8 @@ class GithubPoller(MergebotPoller):
         """Polls Github for PRs, verifies, then searches them for commands.
         """
         # Kick off an SCM merger
-        merger = Thread(target=self.merger.merge)
-        merger.start()
+        merge_process = Process(target=self.merger.merge)
+        merge_process.start()
         # Loop: Forever, every fifteen seconds.
         while True:
             for pull in self.github_helper.fetch_prs():

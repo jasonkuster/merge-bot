@@ -3,7 +3,7 @@
 """
 
 import glob
-import multiprocessing
+from multiprocessing import Pool
 import os
 import signal
 import sys
@@ -47,7 +47,7 @@ def main():
     # http://stackoverflow.com/questions/11312525 and the like. Children need to
     # ignore SIGINT; parent should obey and clean up itself.
     original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    pool = multiprocessing.Pool(len(configs))
+    pool = Pool(len(configs))
     signal.signal(signal.SIGINT, original_sigint_handler)
 
     try:
