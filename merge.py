@@ -140,7 +140,11 @@ class GitMerger(Merger):
                      'Apache push failed. Please try again.')
         except AssertionError as err:
             _print_flush(err)
+            return True
         except EnvironmentError as err:
+            _print_flush(err)
+            return False
+        except Exception as err:
             _print_flush(err)
             return False
         try:
