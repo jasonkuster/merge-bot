@@ -81,7 +81,7 @@ class GithubHelper(object):
             # Unlike above, any 2XX status code is valid here - comments,
             # for example, return 201 CREATED.
             if resp.status_code // 100 is 2:
-                return True
+                return None
             resp.raise_for_status()
         except HTTPError as exc:
             return 'Non-200 HTTP Code Received:'.format(exc)

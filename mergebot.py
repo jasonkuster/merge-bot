@@ -20,10 +20,10 @@ def poll_scm(config):
     l = logging.getLogger('{name}_logger'.format(name=config['name']))
     formatter = logging.Formatter('%(asctime)s : %(message)s')
     file_handler = logging.FileHandler(
-        os.path.join('log', '{name}_log.txt'.format(name=config['name'])),
-        mode='w')
+        os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
     file_handler.setFormatter(formatter)
     l.addHandler(file_handler)
+    l.setLevel(logging.INFO)
     l.info('starting')
     poller = mergebot_poller.create_poller(config)
     l.info('poller created')
@@ -71,7 +71,7 @@ def main():
         while True:
             input('Mergebot running; press Ctrl + C to cancel.\n')
     except KeyboardInterrupt:
-        logger.info('\nExiting.')
+        logger.info('Exiting.')
         pool.terminate()
     else:
         # Generally this shouldn't happen - pollers should run forever.

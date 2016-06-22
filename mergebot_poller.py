@@ -80,10 +80,11 @@ class GithubPoller(MergebotPoller):
         """Polls Github for PRs, verifies, then searches them for commands.
         """
         # Kick off an SCM merger
-        self.l.info('starting merge process')
-        merge_process = Process(target=self.merger.merge)
+        #self.l.info('starting merge process')
+        #merge_process = Process(target=self.merger.merge)
         self.l.info('created')
-        merge_process.start()
+        self.merger.start()
+        #merge_process.start()
         self.l.info('started')
         # Loop: Forever, every fifteen seconds.
         while True:
@@ -133,6 +134,7 @@ class GithubPoller(MergebotPoller):
         # FUTURE: Use mentions API instead?
         if not cmt_body.startswith('@{}'.format(BOT_NAME)):
             self.l.info('Last comment not a command. Moving on.')
+            self.l.info(cmt_body)
             return True
         # Check auth.
         user = cmt.get_user()

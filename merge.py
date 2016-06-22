@@ -9,6 +9,7 @@ import logging
 import os
 from subprocess import check_call
 import sys
+from threading import Thread
 import github_helper
 
 APACHE_GIT = 'https://git-wip-us.apache.org/repos/asf/{repo}.git'
@@ -32,7 +33,7 @@ def create_merger(config, work_queue):
     raise AttributeError('Unsupported SCM type: {}.'.format(config['scm_type']))
 
 
-class Merger(object):
+class Merger(Thread):
     """Merger is the base class for all mergers.
     """
     __metaclass__ = abc.ABCMeta
@@ -47,6 +48,7 @@ class Merger(object):
                 name=config['name'])), mode='w')
         file_handler.setFormatter(formatter)
         l.addHandler(file_handler)
+        l.setLevel(logging.INFO)
         self.main_logger = l
         #if not isinstance(work_queue, Queue):
         #    _print_flush('wasn\'t a queue')
@@ -54,11 +56,13 @@ class Merger(object):
         #                         'multiprocessing.Queue.')
         self.main_logger.info('queueing')
         self.work_queue = work_queue
+        self.main_logger.info('doing')
+        Thread.__init__(self)
         self.main_logger.info('done wit dat')
 
     @abc.abstractmethod
-    def merge(self):
-        """merge spins forever, merging things off of the work queue.
+    def run(self):
+        """run spins forever, merging things off of the work queue.
         """
         return
 
@@ -67,27 +71,29 @@ class GitMerger(Merger):
     """GitMerger merges Git pull requests.
     """
 
-    def merge(self):
-        """merge spins forever, merging things off of the work queue.
+    def run(self):
+        """run spins forever, merging things off of the work queue.
 
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
         while True:
             pr = self.work_queue.get()
-            if not isinstance(pr, github_helper.GithubPR.__class__):
-                raise AttributeError('Expected items in work_queue to be of'
-                                     ' type github_helper.GithubPR')
+            #if not isinstance(pr, github_helper.GithubPR.__class__):
+            #    raise AttributeError('Expected items in work_queue to be of'
+            #                         ' type github_helper.GithubPR')
             output_file = '{name}_pr_{pr_num}_merge_log.txt'.format(
                 name=self.config['name'], pr_num=pr.get_num())
             m_l = logging.getLogger(
                 '{name}_{num}_merge_logger'.format(name=self.config['name'],
                                                    num=pr.get_num()))
-            formatter = logging.Formatter('%(asctime)s : %(message)s')
-            file_handler = logging.FileHandler(
-                os.path.join('log', output_file), mode='w')
-            file_handler.setFormatter(formatter)
-            m_l.addHandler(file_handler)
+            if not m_l.handlers:
+                formatter = logging.Formatter('%(asctime)s : %(message)s')
+                file_handler = logging.FileHandler(
+                    os.path.join('log', output_file), mode='w')
+                file_handler.setFormatter(formatter)
+                m_l.addHandler(file_handler)
+                m_l.setLevel(logging.INFO)
             self.m_l = m_l
             self.m_l.info('Starting merge process for #{}.'.format(
                 pr.get_num()))
@@ -137,7 +143,7 @@ class GitMerger(Merger):
         try:
             cmds = [
                 {
-                    'cmd': 'git clone -b {branch} {repo_url}',
+                    'cmd': 'git clone -b {branch} {repo_url} .',
                     'desc': 'Clone',
                     'error': 'Clone failed. Please try again.',
                 },
@@ -181,9 +187,10 @@ class GitMerger(Merger):
                              'again.',
                 },
                 {
-                    'cmd': 'git merge --no-ff -m {msg} {pr_name}',
+                    'cmd': 'git merge --no-ff -m "{msg}" {pr_name}',
                     'desc': 'Merge PR',
                     'error': 'Merge was not successful. Please try again.',
+                    'shell': True,
                 },
                 {
                     'cmd': self.config['verification_command'],
@@ -199,8 +206,8 @@ class GitMerger(Merger):
             ]
             for command in cmds:
                 shell = True if 'shell' in command else False
-                self.run(command['cmd'], pr_vars, command['desc'],
-                         command['error'], pr, tmp_dir, shell=shell)
+                self.run_cmd(command['cmd'], pr_vars, command['desc'],
+                             command['error'], pr, tmp_dir, shell=shell)
         except AssertionError as err:
             self.m_l.error(err)
             return True
@@ -221,7 +228,7 @@ class GitMerger(Merger):
             self.m_l.info('Pull Request success post failed. Moving on.')
         return True
 
-    def run(self, cmd, fmt_dict, desc, error, pr, tmp_dir, shell=False):
+    def run_cmd(self, cmd, fmt_dict, desc, error, pr, tmp_dir, shell=False):
         """Runs command.
 
         Args:
@@ -236,15 +243,17 @@ class GitMerger(Merger):
             AssertionError: If command was not successful.
             EnvironmentError: If PR comment couldn't be posted to Github.
         """
-        cmd_fmt = cmd.format(**fmt_dict)
+        cmd_full = cmd.format(**fmt_dict)
+        cmd_formatted = cmd_full if shell else cmd_full.split(' ')
         self.m_l.info('Starting: {}.'.format(desc.format(**fmt_dict)))
-        self.m_l.info('Running command: {}.'.format(cmd_fmt))
+        self.m_l.info('Running command: {}.'.format(cmd_formatted))
         try:
-            check_call(cmd_fmt, cwd=tmp_dir, shell=shell)
-        except:
+            check_call(cmd_formatted, cwd=tmp_dir, shell=shell)
+        except Exception as exc:
+            self.m_l.error(exc)
             pr.post_error(error.format(**fmt_dict))
-            raise AssertionError('Command "{}" failed.'.format(cmd_fmt))
-            self.m_l.info('Finished: {}.'.format(desc.format(**fmt_dict)))
+            raise AssertionError('Command "{}" failed.'.format(cmd_formatted))
+        self.m_l.info('Finished: {}.'.format(desc.format(**fmt_dict)))
 
 
 def _set_up(tmp_dir):
@@ -256,6 +265,7 @@ def _set_up(tmp_dir):
         AssertionError: If command was not successful.
     """
     try:
+        _clean_up(tmp_dir)
         check_call(['mkdir', tmp_dir])
     except:
         raise AssertionError('Setup failed.')
