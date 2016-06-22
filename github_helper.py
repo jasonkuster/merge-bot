@@ -11,7 +11,7 @@ GITHUB_API_ROOT = 'https://api.github.com'
 GITHUB_REPO_FMT_URL = GITHUB_API_ROOT + '/repos/{0}/{1}/'
 GITHUB_PULLS_ENDPOINT = 'pulls'
 
-BOT_NAME = 'merge-bot'
+BOT_NAME = 'beam-testing'
 GITHUB_SECRET = '../../github_auth/mergebot.secret'
 
 

@@ -12,9 +12,8 @@ import github_helper
 import merge
 
 # TODO(jasonkuster): Fetch authorized users from somewhere official.
-AUTHORIZED_USERS = ['davorbonaci']
-BOT_NAME = 'merge-bot'
-ORG = 'apache'
+AUTHORIZED_USERS = ['davorbonaci', 'jasonkuster']
+BOT_NAME = 'beam-testing'
 
 
 def create_poller(config):
@@ -28,6 +27,7 @@ def create_poller(config):
         AttributeError: if passed an unsupported SCM type.
     """
     if config['scm_type'] == 'github':
+        _print_flush('github')
         return GithubPoller(config)
     raise AttributeError('Unsupported SCM Type: {}.'.format(config['scm_type']))
 
@@ -42,7 +42,9 @@ class MergebotPoller(object):
         # Thread-safe because of the GIL.
         self.work_queue = Queue()
         self.known_work = {}
+        _print_flush('creating merger')
         self.merger = merge.create_merger(config, self.work_queue)
+        _print_flush('merger created')
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -58,11 +60,14 @@ class GithubPoller(MergebotPoller):
     """
 
     def __init__(self, config):
+        _print_flush('calling parent init')
         super(GithubPoller, self).__init__(config)
         self.COMMANDS = {'merge': self.merge_git}
+        _print_flush('in ghp init')
         # Set up a github helper for handling network requests, etc.
-        self.github_helper = github_helper.GithubHelper(ORG, self.config[
-            'repository'])
+        self.github_helper = github_helper.GithubHelper(
+            self.config['github_org'], self.config['repository'])
+        _print_flush('starting githubpoller')
 
     def poll(self):
         """Kicks off polling of Github.
@@ -75,8 +80,11 @@ class GithubPoller(MergebotPoller):
         """Polls Github for PRs, verifies, then searches them for commands.
         """
         # Kick off an SCM merger
+        _print_flush('starting merge process')
         merge_process = Process(target=self.merger.merge)
+        _print_flush('created')
         merge_process.start()
+        _print_flush('started')
         # Loop: Forever, every fifteen seconds.
         while True:
             for pull in self.github_helper.fetch_prs():

@@ -18,8 +18,14 @@ def poll_scm(config):
         config: A dictionary of configuration to use for the poller.
     """
     sys.stdout = open(os.path.join('log', config['name'] + '_log.txt'), 'w')
+    print('starting')
+    sys.stdout.flush()
     poller = mergebot_poller.create_poller(config)
+    print('starting 2')
+    sys.stdout.flush()
     poller.poll()
+    print('starting 3')
+    sys.stdout.flush()
 
 
 def main():

@@ -27,6 +27,7 @@ def create_merger(config, work_queue):
         AttributeError: if passed an unsupported SCM type.
     """
     if config['scm_type'] == 'github':
+        _print_flush('creating gitmerger')
         return GitMerger(config, work_queue)
     raise AttributeError('Unsupported SCM type: {}.'.format(config['scm_type']))
 
@@ -37,11 +38,16 @@ class Merger(object):
     __metaclass__ = abc.ABCMeta
 
     def __init__(self, config, work_queue):
+        _print_flush('merger init')
         self.config = config
-        if not isinstance(work_queue, Queue):
-            raise AttributeError('Expected work_queue to be of type '
-                                 'multiprocessing.Queue.')
+        _print_flush('configged')
+        #if not isinstance(work_queue, Queue):
+        #    _print_flush('wasn\'t a queue')
+        #    raise AttributeError('Expected work_queue to be of type '
+        #                         'multiprocessing.Queue.')
+        _print_flush('queueing')
         self.work_queue = work_queue
+        _print_flush('done wit dat')
 
     @abc.abstractmethod
     def merge(self):
@@ -60,6 +66,7 @@ class GitMerger(Merger):
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
+        _print_flush('in merge')
         while True:
             pr = self.work_queue.get()
             output_file = '{name}_pr_{pr_num}_merge_log.txt'.format(
@@ -71,14 +78,24 @@ class GitMerger(Merger):
                                          ' type github_helper.GithubPR')
                 _print_flush('Starting merge process for #{}.'.format(
                     pr.get_num()))
-                if self.merge_git_pr(pr):
+
+                tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
+                    self.config['repository'], pr.get_num()))
+                try:
+                    _set_up(tmp_dir)
+                except AssertionError:
+                    pr.post_error('Setup of temp directory failed, try again.')
+                    continue
+                if self.merge_git_pr(pr, tmp_dir):
                     _print_flush('Merge concluded satisfactorily. Moving on.')
                 else:
-                    _print_flush('Merge did not conclude satisfactorily. Adding'
-                                 ' PR back to queue to be tried again.')
+                    _print_flush('Merge did not conclude satisfactorily ('
+                                 'reporting to github failed. Adding PR back to'
+                                 ' queue to be tried again.')
                     self.work_queue.put(pr)
+                _clean_up(tmp_dir)
 
-    def merge_git_pr(self, pr):
+    def merge_git_pr(self, pr, tmp_dir):
         """merge_git_pr merges git pull requests.
 
         Args:
@@ -89,59 +106,94 @@ class GitMerger(Merger):
             False if failure was due to an environmental issue and should be
             retried.
         """
-        self.pr = pr
+        branch = self.config['merge_branch']
+        org = self.config['github_org']
+        remote_name = 'apache'
         repo = self.config['repository']
-        self.tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
-            repo, pr.get_num()))
+        pr_vars = {
+            'apache_url': APACHE_GIT.format(repo=repo),
+            'branch': branch,
+            'branch_path': '{}/{}'.format(remote_name, branch),
+            'msg': 'This closes #{}'.format(pr.get_num()),
+            'remote_name': remote_name,
+            'repo': repo,
+            'repo_url': GITHUB_REPO_URL.format(org=org, repo=repo),
+            'pr_name': 'finish-pr-{}'.format(pr.get_num()),
+            'pr_num': pr.get_num(),
+        }
         try:
-            _set_up(self.tmp_dir)
-        except AssertionError:
-            pr.post_error('Setup of initial directory failed, try again.')
-            return False
-        try:
-            repo_url = GITHUB_REPO_URL.format(org='apache', repo=repo)
-            self.run('git clone -b {branch} {repo}'.format(
-                branch=self.config['merge_branch'], repo=repo_url), 'Clone',
-                     'Clone failed. Please try again.')
-            self.run('git remote add apache {apache_url}'.format(
-                apache_url=APACHE_GIT.format(repo=repo)), 'Add Remote',
-                     'Failed to add remote. Please try again.')
-            self.run('git remote rename origin github', 'Rename Origin',
-                     'Failed to rename origin. Please try again.')
-            self.run('git config --local --add remote.github.fetch '
-                     '"+refs/pull/*/head:refs/remotes/github/pr/*"',
-                     'Configure git fetch.', 'Failed to configure git fetch. '
-                                             'Please try again.', shell=True)
-            self.run('git fetch --all', 'Fetch everything.',
-                     'Fetch failed. Please try again.')
-            pr_num = pr.get_num()
-            pr_name = 'finish-pr-{}'.format(pr.get_num())
-            self.run('git checkout -b {pr_name} github/pr/{pr_num}'.format(
-                pr_name=pr_name, pr_num=pr_num),
-                     'Checkout PR', 'Failed to check out PR. Please try again.')
-            branch = '{}/{}'.format('apache', self.config['merge_branch'])
-            self.run('git rebase {branch}'.format(branch=branch),
-                     'Rebase against target branch.',
-                     'Automatic rebase failed. Please manually rebase '
-                     'against {branch} and try again.'.format(branch=branch))
-            self.run('git checkout {branch}'.format(branch=branch),
-                     'Check out target branch.',
-                     'Failed to check out '
-                     '{branch}. Please try again.'.format(branch=branch))
-            merge_msg = 'This closes #{}'.format(pr.get_num())
-            self.run('git merge --no-ff -m {msg} {pr_name}'.format(
-                msg=merge_msg, pr_name=pr_name), 'Merge PR',
-                     'Merge was not successful. Please try again.')
-            self.run(self.config['verification_command'], 'Verifying PR',
-                     'Verification failed. Please check the error log and try '
-                     'again.')
-            self.run('git push apache HEAD:{branch}'.format(
-                branch=self.config['merge_branch']), 'Push to Apache master.',
-                     'Apache push failed. Please try again.')
+            cmds = [
+                {
+                    'cmd': 'git clone -b {branch} {repo_url}',
+                    'desc': 'Clone',
+                    'error': 'Clone failed. Please try again.',
+                },
+                {
+                    'cmd': 'git remote add {remote_name} {apache_url}',
+                    'desc': 'Add Remote',
+                    'error': 'Failed to add remote. Please try again.',
+                },
+                {
+                    'cmd': 'git remote rename origin github',
+                    'desc': 'Rename Origin',
+                    'error': 'Failed to rename origin. Please try again.',
+                },
+                {
+                    'cmd': 'git config --local --add remote.github.fetch '
+                           '"+refs/pull/*/head:refs/remotes/github/pr/*"',
+                    'desc': 'Configure git fetch.',
+                    'error': 'Failed to configure git fetch. Please try again.',
+                    'shell': True,
+                },
+                {
+                    'cmd': 'git fetch --all',
+                    'desc': 'Fetch everything.',
+                    'error': 'Fetch failed. Please try again.',
+                },
+                {
+                    'cmd': 'git checkout -b {pr_name} github/pr/{pr_num}',
+                    'desc': 'Checkout PR',
+                    'error': 'Failed to check out PR. Please try again.',
+                },
+                {
+                    'cmd': 'git rebase {branch_path}',
+                    'desc': 'Rebase against target branch.',
+                    'error': 'Automatic rebase failed. Please manually rebase '
+                             'against {branch_path} and try again.',
+                },
+                {
+                    'cmd': 'git checkout {branch_path}',
+                    'desc': 'Check out target branch.',
+                    'error': 'Failed to check out {branch_path}. Please try '
+                             'again.',
+                },
+                {
+                    'cmd': 'git merge --no-ff -m {msg} {pr_name}',
+                    'desc': 'Merge PR',
+                    'error': 'Merge was not successful. Please try again.',
+                },
+                {
+                    'cmd': self.config['verification_command'],
+                    'desc': 'Verifying PR',
+                    'error': 'Verification failed. Please check the error log'
+                             ' and try again.',
+                },
+                #{
+                #    'cmd': 'git push {remote_name} HEAD:{branch}',
+                #    'desc': 'Push to remote master.',
+                #    'error': 'Remote push failed. Please try again.',
+                #},
+            ]
+            for command in cmds:
+                shell = True if 'shell' in command else False
+                self.run(command['cmd'], pr_vars, command['desc'],
+                         command['error'], pr, tmp_dir, shell=shell)
         except AssertionError as err:
             _print_flush(err)
             return True
         except EnvironmentError as err:
+            _print_flush("Couldn't post comment to github. Leaving this on "
+                         "the ")
             _print_flush(err)
             return False
         except Exception as err:
@@ -149,31 +201,37 @@ class GitMerger(Merger):
             return False
         try:
             pr.post_info('PR merge succeeded!')
+            _print_flush('Merge for {pr_num} completed successfully.'.format(
+                pr_num=pr.get_num()))
         except EnvironmentError as err:
             _print_flush(err)
             _print_flush('Pull Request success post failed. Moving on.')
         return True
 
-    def run(self, cmd, desc, error, shell=False):
+    def run(self, cmd, fmt_dict, desc, error, pr, tmp_dir, shell=False):
         """Runs command.
 
         Args:
             cmd: Command to run.
+            fmt_dict: Dictionary of parameters with which to format the
+            command and other strings.
             desc: Description of command.
             error: Error to post to github if command fails.
             shell: Whether to run the command in shell mode.
+            tmp_dir: Location in which to run command.
         Raises:
             AssertionError: If command was not successful.
             EnvironmentError: If PR comment couldn't be posted to Github.
         """
-        _print_flush('Starting: {}.'.format(desc))
-        _print_flush('Running command: {}.'.format(cmd))
+        cmd_fmt = cmd.format(**fmt_dict)
+        _print_flush('Starting: {}.'.format(desc.format(**fmt_dict)))
+        _print_flush('Running command: {}.'.format(cmd_fmt))
         try:
-            check_call(cmd, cwd=self.tmp_dir, shell=shell)
+            check_call(cmd_fmt, cwd=tmp_dir, shell=shell)
         except:
-            self.pr.post_error(error)
-            raise AssertionError('Command "{}" failed.'.format(cmd))
-        _print_flush('Finished: {}.'.format(desc))
+            pr.post_error(error.format(**fmt_dict))
+            raise AssertionError('Command "{}" failed.'.format(cmd_fmt))
+        _print_flush('Finished: {}.'.format(desc.format(**fmt_dict)))
 
 
 def _set_up(tmp_dir):
@@ -195,13 +253,11 @@ def _clean_up(tmp_dir):
 
     Args:
         tmp_dir: Directory to remove.
-    Raises:
-        AssertionError: If command was not successful.
     """
     try:
         check_call(['rm', '-rf', tmp_dir])
     except:
-        raise AssertionError('Cleanup failed.')
+        _print_flush('Cleanup failed.')
 
 
 def _print_flush(msg):

@@ -1,6 +1,8 @@
---- 
+---
 merge_branch: master
-name: apache_beam
+name: jasonkuster
+github_org: jasonkuster
 repository: incubator-beam
 scm_type: github
 verification_command: "mvn clean install"
+
