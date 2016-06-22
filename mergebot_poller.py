@@ -44,7 +44,7 @@ class MergebotPoller(object):
         self.known_work = {}
         l = logging.getLogger('{name}_logger'.format(name=config['name']))
         f = logging.Formatter(
-            '%(asctime)s - %(name)s - %(level)s - %(message)s')
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         h = logging.FileHandler(
             os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
         h.setFormatter(f)
@@ -131,7 +131,7 @@ class GithubPoller(MergebotPoller):
         # FUTURE: Look for @merge-bot reply comments.
         # FUTURE: Use mentions API instead?
         if not cmt_body.startswith('@{}'.format(BOT_NAME)):
-            self.l.info('Last comment not a command. Moving on. Command: ')
+            self.l.info('Last comment not a command. Moving on. Comment: ')
             self.l.info(cmt_body)
             return True
         # Check auth.

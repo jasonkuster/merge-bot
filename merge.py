@@ -42,7 +42,7 @@ class Merger(Thread):
         l = logging.getLogger(
             '{name}_merge_logger'.format(name=self.config['name']))
         f = logging.Formatter(
-            '%(asctime)s - %(name)s - %(level)s - %(message)s')
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         h = logging.FileHandler(
             os.path.join('log', '{name}_merger_log.txt'.format(
                 name=config['name'])), mode='w')
@@ -85,7 +85,7 @@ class GitMerger(Merger):
                                                    num=pr_num))
             if not m_l.handlers:
                 f = logging.Formatter(
-                    '%(asctime)s - %(name)s - %(level)s - %(message)s')
+                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
                 h = logging.FileHandler(os.path.join('log', output_file))
                 h.setFormatter(f)
                 m_l.addHandler(f)
