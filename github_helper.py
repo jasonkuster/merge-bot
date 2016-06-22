@@ -1,7 +1,6 @@
 """github_helper provides several methods to help interface with Github.
 """
 
-import sys
 import urlparse
 import dateutil.parser
 import requests
@@ -35,7 +34,7 @@ class GithubHelper(object):
         """
         try:
             prs = self.get(GITHUB_PULLS_ENDPOINT)
-            return ([GithubPR(self, pr) for pr in prs], None)
+            return [GithubPR(self, pr) for pr in prs], None
         except HTTPError as exc:
             return [], 'Non-200 HTTP Code Received: {}'.format(exc)
         except Timeout as exc:

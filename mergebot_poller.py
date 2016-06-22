@@ -6,8 +6,8 @@ inherit and a create_poller method which allows creation of SCM pollers.
 
 
 import logging
-from multiprocessing import Process, Queue
-import sys
+from multiprocessing import Queue
+import os
 import time
 import github_helper
 import merge
@@ -42,11 +42,15 @@ class MergebotPoller(object):
         # Thread-safe because of the GIL.
         self.work_queue = Queue()
         self.known_work = {}
-        l = logging.getLogger('{name}_logger'.format(name=self.config['name']))
+        l = logging.getLogger('{name}_logger'.format(name=config['name']))
+        formatter = logging.Formatter('%(asctime)s : %(message)s')
+        file_handler = logging.FileHandler(
+            os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
+        file_handler.setFormatter(formatter)
+        l.addHandler(file_handler)
+        l.setLevel(logging.INFO)
         self.l = l
-        self.l.info('creating merger')
         self.merger = merge.create_merger(config, self.work_queue)
-        self.l.info('merger created')
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -64,11 +68,9 @@ class GithubPoller(MergebotPoller):
     def __init__(self, config):
         super(GithubPoller, self).__init__(config)
         self.COMMANDS = {'merge': self.merge_git}
-        self.l.info('in ghp init')
         # Set up a github helper for handling network requests, etc.
         self.github_helper = github_helper.GithubHelper(
             self.config['github_org'], self.config['repository'])
-        self.l.info('starting githubpoller')
 
     def poll(self):
         """Kicks off polling of Github.
@@ -79,13 +81,8 @@ class GithubPoller(MergebotPoller):
     def poll_github(self):
         """Polls Github for PRs, verifies, then searches them for commands.
         """
-        # Kick off an SCM merger
-        #self.l.info('starting merge process')
-        #merge_process = Process(target=self.merger.merge)
-        self.l.info('created')
+        # Kick off SCM merger
         self.merger.start()
-        #merge_process.start()
-        self.l.info('started')
         # Loop: Forever, every fifteen seconds.
         while True:
             prs, err = self.github_helper.fetch_prs()
@@ -133,7 +130,7 @@ class GithubPoller(MergebotPoller):
         # FUTURE: Look for @merge-bot reply comments.
         # FUTURE: Use mentions API instead?
         if not cmt_body.startswith('@{}'.format(BOT_NAME)):
-            self.l.info('Last comment not a command. Moving on.')
+            self.l.info('Last comment not a command. Moving on. Command: ')
             self.l.info(cmt_body)
             return True
         # Check auth.

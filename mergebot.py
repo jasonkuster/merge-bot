@@ -17,18 +17,8 @@ def poll_scm(config):
     Args:
         config: A dictionary of configuration to use for the poller.
     """
-    l = logging.getLogger('{name}_logger'.format(name=config['name']))
-    formatter = logging.Formatter('%(asctime)s : %(message)s')
-    file_handler = logging.FileHandler(
-        os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
-    file_handler.setFormatter(formatter)
-    l.addHandler(file_handler)
-    l.setLevel(logging.INFO)
-    l.info('starting')
     poller = mergebot_poller.create_poller(config)
-    l.info('poller created')
     poller.poll()
-    l.info('poller is poll')
 
 
 def main():
