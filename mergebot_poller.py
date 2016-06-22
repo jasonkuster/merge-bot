@@ -43,11 +43,12 @@ class MergebotPoller(object):
         self.work_queue = Queue()
         self.known_work = {}
         l = logging.getLogger('{name}_logger'.format(name=config['name']))
-        formatter = logging.Formatter('%(asctime)s : %(message)s')
-        file_handler = logging.FileHandler(
+        f = logging.Formatter(
+            '%(asctime)s - %(name)s - %(level)s - %(message)s')
+        h = logging.FileHandler(
             os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
-        file_handler.setFormatter(formatter)
-        l.addHandler(file_handler)
+        h.setFormatter(f)
+        l.addHandler(h)
         l.setLevel(logging.INFO)
         self.l = l
         self.merger = merge.create_merger(config, self.work_queue)

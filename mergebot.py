@@ -28,25 +28,25 @@ def main():
     successfully read in. It then waits for a keyboard interrupt as the
     signal to shut down itself and its children.
     """
-    logger = logging.getLogger('mergebot')
-    formatter = logging.Formatter('%(asctime)s : %(message)s')
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logger.setLevel(logging.INFO)
-    logger.addHandler(stream_handler)
-    logger.info('Mergebot Manager Starting Up')
+    l = logging.getLogger('mergebot')
+    f = logging.Formatter('%(asctime)s - %(name)s - %(level)s - %(message)s')
+    h = logging.StreamHandler()
+    h.setFormatter(f)
+    l.setLevel(logging.INFO)
+    l.addHandler(h)
+    l.info('Mergebot Manager Starting Up')
     configs = []
-    logger.info('Parsing Config Files')
+    l.info('Parsing Config Files')
     for filename in glob.iglob('config/*.yaml'):
         with open(filename) as cfg:
             try:
-                logger.info('Opening {}'.format(filename))
+                l.info('Opening {}'.format(filename))
                 config = yaml.load(cfg)
-                logger.info('{} Successfully Read'.format(filename))
+                l.info('{} Successfully Read'.format(filename))
                 configs.append(config)
             except yaml.YAMLError as exc:
-                logger.error('Error parsing file {}: {}.'.format(filename, exc))
-                logger.error('Please fix and try again.')
+                l.error('Error parsing file {}: {}.'.format(filename, exc))
+                l.error('Please fix and try again.')
                 return
     # Workaround for multiprocessing SIGINT problems per
     # http://stackoverflow.com/questions/11312525 and the like. Children need to
@@ -56,12 +56,12 @@ def main():
     signal.signal(signal.SIGINT, original_sigint_handler)
 
     try:
-        logger.info('Starting Poller Pool')
+        l.info('Starting Poller Pool')
         pool.map_async(poll_scm, configs)
         while True:
             input('Mergebot running; press Ctrl + C to cancel.\n')
     except KeyboardInterrupt:
-        logger.info('Exiting.')
+        l.info('Exiting.')
         pool.terminate()
     else:
         # Generally this shouldn't happen - pollers should run forever.
@@ -70,8 +70,8 @@ def main():
         # TODO(jasonkuster): We could get into a state where we're only polling
         # one repo and all others have crashed. Once mergebot is functional,
         # work on better poller management.
-        logger.error('Mergebot terminated early. All pollers'
-                     ' must have crashed.')
+        l.error('Mergebot terminated early. All pollers'
+                ' must have crashed.')
 
 
 if __name__ == '__main__':

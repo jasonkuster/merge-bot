@@ -41,12 +41,13 @@ class Merger(Thread):
         self.config = config
         l = logging.getLogger(
             '{name}_merge_logger'.format(name=self.config['name']))
-        formatter = logging.Formatter('%(asctime)s : %(message)s')
-        file_handler = logging.FileHandler(
+        f = logging.Formatter(
+            '%(asctime)s - %(name)s - %(level)s - %(message)s')
+        h = logging.FileHandler(
             os.path.join('log', '{name}_merger_log.txt'.format(
                 name=config['name'])), mode='w')
-        file_handler.setFormatter(formatter)
-        l.addHandler(file_handler)
+        h.setFormatter(f)
+        l.addHandler(h)
         l.setLevel(logging.INFO)
         self.main_logger = l
         self.work_queue = work_queue
@@ -71,34 +72,44 @@ class GitMerger(Merger):
         """
         while True:
             pr = self.work_queue.get()
+            pr_num = pr.get_num()
+            self.main_logger.info(
+                'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
+            self.main_logger.info(
+                '{remaining} work items remaining.'.format(
+                    remaining=self.work_queue.qsize()))
             output_file = '{name}_pr_{pr_num}_merge_log.txt'.format(
-                name=self.config['name'], pr_num=pr.get_num())
+                name=self.config['name'], pr_num=pr_num)
             m_l = logging.getLogger(
                 '{name}_{num}_merge_logger'.format(name=self.config['name'],
-                                                   num=pr.get_num()))
+                                                   num=pr_num))
             if not m_l.handlers:
-                formatter = logging.Formatter('%(asctime)s : %(message)s')
-                file_handler = logging.FileHandler(
-                    os.path.join('log', output_file), mode='w')
-                file_handler.setFormatter(formatter)
-                m_l.addHandler(file_handler)
+                f = logging.Formatter(
+                    '%(asctime)s - %(name)s - %(level)s - %(message)s')
+                h = logging.FileHandler(os.path.join('log', output_file))
+                h.setFormatter(f)
+                m_l.addHandler(f)
                 m_l.setLevel(logging.INFO)
-            self.m_l.info('Starting merge process for #{}.'.format(
+            m_l.info('Starting merge process for #{}.'.format(
                 pr.get_num()))
 
             tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
-                self.config['repository'], pr.get_num()))
+                self.config['repository'], pr_num))
             try:
                 _set_up(tmp_dir)
             except AssertionError:
                 pr.post_error('Setup of temp directory failed, try again.')
                 continue
             if self.merge_git_pr(pr, tmp_dir, m_l):
-                self.m_l.info('Merge concluded satisfactorily. Moving on.')
+                m_l.info('Merge concluded satisfactorily. Moving on.')
+                self.main_logger.info(
+                    'PR#{num} processing done.'.format(num=pr_num))
             else:
-                self.m_l.info('Merge did not conclude satisfactorily ('
-                              'reporting to github failed. Adding PR back to'
-                              ' queue to be tried again.')
+                m_l.info('Merge did not conclude satisfactorily ('
+                         'reporting to github failed). Adding PR back to'
+                         ' queue to be tried again.')
+                self.main_logger.info(
+                    'PR#{num} processing failed.'.format(num=pr_num))
                 self.work_queue.put(pr)
             _clean_up(tmp_dir)
 
