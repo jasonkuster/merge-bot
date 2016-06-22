@@ -3,10 +3,10 @@
 """
 
 import glob
+import logging
 from multiprocessing import Pool
 import os
 import signal
-import sys
 import mergebot_poller
 import yaml
 
@@ -17,15 +17,18 @@ def poll_scm(config):
     Args:
         config: A dictionary of configuration to use for the poller.
     """
-    sys.stdout = open(os.path.join('log', config['name'] + '_log.txt'), 'w')
-    print('starting')
-    sys.stdout.flush()
+    l = logging.getLogger('{name}_logger'.format(name=config['name']))
+    formatter = logging.Formatter('%(asctime)s : %(message)s')
+    file_handler = logging.FileHandler(
+        os.path.join('log', '{name}_log.txt'.format(name=config['name'])),
+        mode='w')
+    file_handler.setFormatter(formatter)
+    l.addHandler(file_handler)
+    l.info('starting')
     poller = mergebot_poller.create_poller(config)
-    print('starting 2')
-    sys.stdout.flush()
+    l.info('poller created')
     poller.poll()
-    print('starting 3')
-    sys.stdout.flush()
+    l.info('poller is poll')
 
 
 def main():
@@ -35,19 +38,25 @@ def main():
     successfully read in. It then waits for a keyboard interrupt as the
     signal to shut down itself and its children.
     """
-    print 'Mergebot Manager Starting Up'
+    logger = logging.getLogger('mergebot')
+    formatter = logging.Formatter('%(asctime)s : %(message)s')
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(stream_handler)
+    logger.info('Mergebot Manager Starting Up')
     configs = []
-    print 'Parsing Config Files'
+    logger.info('Parsing Config Files')
     for filename in glob.iglob('config/*.yaml'):
         with open(filename) as cfg:
             try:
-                print 'Opening {}'.format(filename)
+                logger.info('Opening {}'.format(filename))
                 config = yaml.load(cfg)
-                print '{} Successfully Read'.format(filename)
+                logger.info('{} Successfully Read'.format(filename))
                 configs.append(config)
             except yaml.YAMLError as exc:
-                print 'Error parsing file {}: {}.'.format(filename, exc)
-                print 'Please fix and try again.'
+                logger.error('Error parsing file {}: {}.'.format(filename, exc))
+                logger.error('Please fix and try again.')
                 return
     # Workaround for multiprocessing SIGINT problems per
     # http://stackoverflow.com/questions/11312525 and the like. Children need to
@@ -57,12 +66,12 @@ def main():
     signal.signal(signal.SIGINT, original_sigint_handler)
 
     try:
-        print 'Starting Poller Pool'
+        logger.info('Starting Poller Pool')
         pool.map_async(poll_scm, configs)
         while True:
             input('Mergebot running; press Ctrl + C to cancel.\n')
     except KeyboardInterrupt:
-        print '\nExiting.'
+        logger.info('\nExiting.')
         pool.terminate()
     else:
         # Generally this shouldn't happen - pollers should run forever.
@@ -71,7 +80,8 @@ def main():
         # TODO(jasonkuster): We could get into a state where we're only polling
         # one repo and all others have crashed. Once mergebot is functional,
         # work on better poller management.
-        print 'Mergebot terminated early - all pollers must have crashed.'
+        logger.error('Mergebot terminated early. All pollers'
+                     ' must have crashed.')
 
 
 if __name__ == '__main__':

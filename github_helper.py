@@ -23,30 +23,26 @@ class GithubHelper(object):
         self.repo_url = GITHUB_REPO_FMT_URL.format(org, repo)
         with open(GITHUB_SECRET, 'r') as key_file:
             self.bot_key = key_file.read().strip()
-        _print_flush('Loaded key file.')
 
     def fetch_prs(self):
         """Gets the PRs for the configured repository.
 
         Returns:
-            An iterable containing instances of GithubPR if successful.
-            Empty list otherwise.
+            A tuple of (pr_list, error).
+            pr_list contains an iterable containing instances of GithubPR if
+            successful; empty list otherwise.
+            error is None if no errors, else error message.
         """
         try:
             prs = self.get(GITHUB_PULLS_ENDPOINT)
-            return [GithubPR(self, pr) for pr in prs]
+            return ([GithubPR(self, pr) for pr in prs], None)
         except HTTPError as exc:
-            _print_flush('Non-200 HTTP Code Received:')
-            _print_flush(exc)
+            return [], 'Non-200 HTTP Code Received: {}'.format(exc)
         except Timeout as exc:
-            _print_flush('Request timed out:')
-            _print_flush(exc)
+            return [], 'Request timed out: {}'.format(exc)
         except RequestException as exc:
-            _print_flush('Catastrophic error in requests:')
-            _print_flush(exc)
-        _print_flush('Retrieving pull requests failed.')
-        return []
-
+            return [], 'Catastrophic error in requests: {}'.format(exc)
+        return [], 'Unknown Error'
 
     def get(self, endpoint):
         """get makes a GET request against a specified endpoint.
@@ -62,7 +58,6 @@ class GithubHelper(object):
             RequestException: for other assorted exceptional cases.
         """
         url = urlparse.urljoin(self.repo_url, endpoint)
-        _print_flush('Loading from Github at {}.'.format(url))
         resp = requests.get(url, auth=(BOT_NAME, self.bot_key))
         if resp.status_code is 200:
             return resp.json()
@@ -76,8 +71,7 @@ class GithubHelper(object):
             endpoint: URL to which to make the POST request. URL is relative
             to https://api.github.com/repos/{self.org}/{self.repo}/
         Returns:
-            True if request completed successfully.
-            False otherwise.
+            None if request returned successfully, error otherwise.
         """
         payload = '{{"body": "{}"}}'.format(content)
         url = urlparse.urljoin(self.repo_url, endpoint)
@@ -90,15 +84,12 @@ class GithubHelper(object):
                 return True
             resp.raise_for_status()
         except HTTPError as exc:
-            _print_flush('Non-200 HTTP Code Received:')
-            _print_flush(exc)
+            return 'Non-200 HTTP Code Received:'.format(exc)
         except Timeout as exc:
-            _print_flush('Request timed out:')
-            _print_flush(exc)
+            return 'Request timed out: {}'.format(exc)
         except RequestException as exc:
-            _print_flush('Catastrophic error in requests:')
-            _print_flush(exc)
-        return False
+            return 'Catastrophic error in requests: {}'.format(exc)
+        return 'Unknown Error'
 
 
 class GithubPR(object):
@@ -167,8 +158,10 @@ class GithubPR(object):
         Raises:
             EnvironmentError: If post to Github failed.
         """
-        if not self.helper.post(content, self.comments_url):
-            raise EnvironmentError("Couldn't post to Github.")
+        err = self.helper.post(content, self.comments_url)
+        if err is not None:
+            raise EnvironmentError(
+                "Couldn't post to Github: {err}.".format(err=err))
 
 
 class GithubComment(object):
@@ -194,13 +187,3 @@ class GithubComment(object):
             comment body.
         """
         return self.cmt_body
-
-
-def _print_flush(msg):
-    """print_flush ensures stdout is flushed immediately upon printing.
-
-    Args:
-        msg: The message to print.
-    """
-    print msg
-    sys.stdout.flush()

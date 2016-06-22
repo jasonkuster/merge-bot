@@ -5,6 +5,7 @@ they work, and then submit.
 """
 import abc
 from multiprocessing import Queue
+import logging
 import os
 from subprocess import check_call
 import sys
@@ -27,7 +28,6 @@ def create_merger(config, work_queue):
         AttributeError: if passed an unsupported SCM type.
     """
     if config['scm_type'] == 'github':
-        _print_flush('creating gitmerger')
         return GitMerger(config, work_queue)
     raise AttributeError('Unsupported SCM type: {}.'.format(config['scm_type']))
 
@@ -38,16 +38,23 @@ class Merger(object):
     __metaclass__ = abc.ABCMeta
 
     def __init__(self, config, work_queue):
-        _print_flush('merger init')
         self.config = config
-        _print_flush('configged')
+        l = logging.getLogger(
+            '{name}_merge_logger'.format(name=self.config['name']))
+        formatter = logging.Formatter('%(asctime)s : %(message)s')
+        file_handler = logging.FileHandler(
+            os.path.join('log', '{name}_merger_log.txt'.format(
+                name=config['name'])), mode='w')
+        file_handler.setFormatter(formatter)
+        l.addHandler(file_handler)
+        self.main_logger = l
         #if not isinstance(work_queue, Queue):
         #    _print_flush('wasn\'t a queue')
         #    raise AttributeError('Expected work_queue to be of type '
         #                         'multiprocessing.Queue.')
-        _print_flush('queueing')
+        self.main_logger.info('queueing')
         self.work_queue = work_queue
-        _print_flush('done wit dat')
+        self.main_logger.info('done wit dat')
 
     @abc.abstractmethod
     def merge(self):
@@ -66,34 +73,40 @@ class GitMerger(Merger):
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
-        _print_flush('in merge')
         while True:
             pr = self.work_queue.get()
+            if not isinstance(pr, github_helper.GithubPR.__class__):
+                raise AttributeError('Expected items in work_queue to be of'
+                                     ' type github_helper.GithubPR')
             output_file = '{name}_pr_{pr_num}_merge_log.txt'.format(
                 name=self.config['name'], pr_num=pr.get_num())
-            with open(os.path.join('log', output_file), 'w') as log_file:
-                sys.stdout = log_file
-                if not isinstance(pr, github_helper.GithubPR.__class__):
-                    raise AttributeError('Expected items in work_queue to be of'
-                                         ' type github_helper.GithubPR')
-                _print_flush('Starting merge process for #{}.'.format(
-                    pr.get_num()))
+            m_l = logging.getLogger(
+                '{name}_{num}_merge_logger'.format(name=self.config['name'],
+                                                   num=pr.get_num()))
+            formatter = logging.Formatter('%(asctime)s : %(message)s')
+            file_handler = logging.FileHandler(
+                os.path.join('log', output_file), mode='w')
+            file_handler.setFormatter(formatter)
+            m_l.addHandler(file_handler)
+            self.m_l = m_l
+            self.m_l.info('Starting merge process for #{}.'.format(
+                pr.get_num()))
 
-                tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
-                    self.config['repository'], pr.get_num()))
-                try:
-                    _set_up(tmp_dir)
-                except AssertionError:
-                    pr.post_error('Setup of temp directory failed, try again.')
-                    continue
-                if self.merge_git_pr(pr, tmp_dir):
-                    _print_flush('Merge concluded satisfactorily. Moving on.')
-                else:
-                    _print_flush('Merge did not conclude satisfactorily ('
-                                 'reporting to github failed. Adding PR back to'
-                                 ' queue to be tried again.')
-                    self.work_queue.put(pr)
-                _clean_up(tmp_dir)
+            tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
+                self.config['repository'], pr.get_num()))
+            try:
+                _set_up(tmp_dir)
+            except AssertionError:
+                pr.post_error('Setup of temp directory failed, try again.')
+                continue
+            if self.merge_git_pr(pr, tmp_dir):
+                self.m_l.info('Merge concluded satisfactorily. Moving on.')
+            else:
+                self.m_l.info('Merge did not conclude satisfactorily ('
+                              'reporting to github failed. Adding PR back to'
+                              ' queue to be tried again.')
+                self.work_queue.put(pr)
+            _clean_up(tmp_dir)
 
     def merge_git_pr(self, pr, tmp_dir):
         """merge_git_pr merges git pull requests.
@@ -189,23 +202,23 @@ class GitMerger(Merger):
                 self.run(command['cmd'], pr_vars, command['desc'],
                          command['error'], pr, tmp_dir, shell=shell)
         except AssertionError as err:
-            _print_flush(err)
+            self.m_l.error(err)
             return True
         except EnvironmentError as err:
-            _print_flush("Couldn't post comment to github. Leaving this on "
-                         "the ")
-            _print_flush(err)
+            self.m_l.error("Couldn't post comment to github. Leaving this on "
+                           "the queue to try again.")
+            self.m_l.error(err)
             return False
         except Exception as err:
-            _print_flush(err)
+            self.m_l.error(err)
             return False
         try:
             pr.post_info('PR merge succeeded!')
-            _print_flush('Merge for {pr_num} completed successfully.'.format(
+            self.m_l.info('Merge for {pr_num} completed successfully.'.format(
                 pr_num=pr.get_num()))
         except EnvironmentError as err:
-            _print_flush(err)
-            _print_flush('Pull Request success post failed. Moving on.')
+            self.m_l.info(err)
+            self.m_l.info('Pull Request success post failed. Moving on.')
         return True
 
     def run(self, cmd, fmt_dict, desc, error, pr, tmp_dir, shell=False):
@@ -224,14 +237,14 @@ class GitMerger(Merger):
             EnvironmentError: If PR comment couldn't be posted to Github.
         """
         cmd_fmt = cmd.format(**fmt_dict)
-        _print_flush('Starting: {}.'.format(desc.format(**fmt_dict)))
-        _print_flush('Running command: {}.'.format(cmd_fmt))
+        self.m_l.info('Starting: {}.'.format(desc.format(**fmt_dict)))
+        self.m_l.info('Running command: {}.'.format(cmd_fmt))
         try:
             check_call(cmd_fmt, cwd=tmp_dir, shell=shell)
         except:
             pr.post_error(error.format(**fmt_dict))
             raise AssertionError('Command "{}" failed.'.format(cmd_fmt))
-        _print_flush('Finished: {}.'.format(desc.format(**fmt_dict)))
+            self.m_l.info('Finished: {}.'.format(desc.format(**fmt_dict)))
 
 
 def _set_up(tmp_dir):
@@ -253,18 +266,11 @@ def _clean_up(tmp_dir):
 
     Args:
         tmp_dir: Directory to remove.
+    Returns:
+        error if cleanup fails, None otherwise.
     """
     try:
         check_call(['rm', '-rf', tmp_dir])
+        return None
     except:
-        _print_flush('Cleanup failed.')
-
-
-def _print_flush(msg):
-    """_print_flush prints to stdout, then flushes immediately.
-
-    Args:
-        msg: the message to print.
-    """
-    print msg
-    sys.stdout.flush()
+        return 'Cleanup failed.'
