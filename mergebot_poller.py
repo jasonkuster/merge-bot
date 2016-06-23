@@ -42,8 +42,8 @@ class MergebotPoller(object):
         self.work_queue = Queue()
         self.known_work = {}
         l = logging.getLogger('{name}_logger'.format(name=config['name']))
-        f = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        f = logging.Formatter(log_fmt)
         h = logging.FileHandler(
             os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
         h.setFormatter(f)
@@ -81,14 +81,12 @@ class GithubPoller(MergebotPoller):
     def poll_github(self):
         """Polls Github for PRs, verifies, then searches them for commands.
         """
-        # Kick off SCM merger
         self.merger.start()
         # Loop: Forever, every fifteen seconds.
         while True:
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
-                self.l.error(
-                    'Error fetching pull requests: {err}.'.format(err=err))
+                self.l.error('Error fetching PRs: {err}.'.format(err=err))
                 continue
             for pull in prs:
                 self.check_pr(pull)
@@ -101,8 +99,8 @@ class GithubPoller(MergebotPoller):
             pull: A GithubPR object.
         """
         num = pull.get_num()
-        if num not in self.known_work.keys() or pull.get_updated() != \
-                self.known_work.get(num):
+        pr_unknown = num not in self.known_work.keys()
+        if pr_unknown or pull.get_updated() != self.known_work.get(num):
             self.l.info('<PR #{}>'.format(num))
             if self.search_github_pr(pull):
                 self.known_work[num] = pull.get_updated()
@@ -136,11 +134,13 @@ class GithubPoller(MergebotPoller):
         # Check auth.
         user = cmt.get_user()
         if user not in AUTHORIZED_USERS:
-            error = 'User {} not a committer; access denied.'.format(user)
-            self.l.warning('Unauthorized user "{}"'.format(user) +
-                           ' attempted command "{}".'.format(cmt_body))
-            if not pull.post_error(error):
-                self.l.error('Error posting PR comment.')
+            log_error = 'Unauthorized user "{user}" attempted command "{com}".'
+            pr_error = 'User {user} not a committer; access denied.'
+            self.l.warning(log_error.format(user=user, com=cmt_body))
+            try:
+                pull.post_error(pr_error.format(user=user))
+            except EnvironmentError as err:
+                self.l.error('Error posting comment: {err}.'.format(err=err))
                 return False
             return True
         cmd_str = cmt_body.split('@{} '.format(BOT_NAME), 1)[1]
@@ -148,12 +148,13 @@ class GithubPoller(MergebotPoller):
         if cmd not in self.COMMANDS.keys():
             self.l.warning('Command was {}, not a valid command.'.format(cmd))
             # Post back to PR
-            err = 'Command was {}, not a valid command. Valid commands: {}.'
-            if not pull.post_error(err.format(cmd, self.COMMANDS.keys())):
-                self.l.error('Error posting PR comment.')
+            error = 'Command was {}, not a valid command. Valid commands: {}.'
+            try:
+                pull.post_error(error.format(cmd, self.COMMANDS.keys()))
+            except EnvironmentError as err:
+                self.l.error('Error posting comment: {err}.'.format(err=err))
                 return False
             return True
-
         return self.COMMANDS[cmd](pull)
 
     def merge_git(self, pull):

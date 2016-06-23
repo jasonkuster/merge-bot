@@ -28,8 +28,8 @@ def main():
     signal to shut down itself and its children.
     """
     l = logging.getLogger('mergebot')
-    f = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    f = logging.Formatter(log_fmt)
     h = logging.StreamHandler()
     h.setFormatter(f)
     l.setLevel(logging.INFO)
@@ -70,8 +70,7 @@ def main():
         # TODO(jasonkuster): We could get into a state where we're only polling
         # one repo and all others have crashed. Once mergebot is functional,
         # work on better poller management.
-        l.error('Mergebot terminated early. All pollers'
-                ' must have crashed.')
+        l.error('Mergebot terminated early. All pollers must have crashed.')
 
 
 if __name__ == '__main__':

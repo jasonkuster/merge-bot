@@ -26,8 +26,9 @@ class TestGithubHelper(unittest.TestCase):
         # Tests that an empty response returns correctly.
         mock_get.return_value = []
         self.mocked_helper.get = mock_get
-        res = self.mocked_helper.fetch_prs()
+        res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
+        self.assertIsNone(err)
 
     @patch('github_helper.GithubHelper.get')
     @patch('github_helper.GithubPR')
@@ -35,8 +36,9 @@ class TestGithubHelper(unittest.TestCase):
         # Tests that HTTPErrors are caught correctly.
         mock_get.side_effect = requests.exceptions.HTTPError
         self.mocked_helper.get = mock_get
-        res = self.mocked_helper.fetch_prs()
+        res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
+        self.assertIsNone(err)
 
     @patch('github_helper.GithubHelper.get')
     @patch('github_helper.GithubPR')
@@ -44,8 +46,9 @@ class TestGithubHelper(unittest.TestCase):
         # Tests that timeouts are caught correctly.
         mock_get.side_effect = requests.exceptions.Timeout
         self.mocked_helper.get = mock_get
-        res = self.mocked_helper.fetch_prs()
+        res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
+        self.assertIsNone(err)
 
     @patch('github_helper.GithubHelper.get')
     @patch('github_helper.GithubPR')
@@ -53,8 +56,9 @@ class TestGithubHelper(unittest.TestCase):
         # Tests that RequestExceptions are caught correctly.
         mock_get.side_effect = requests.exceptions.RequestException
         self.mocked_helper.get = mock_get
-        res = self.mocked_helper.fetch_prs()
+        res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
+        self.assertIsNone(err)
 
     @patch('github_helper.requests.post')
     @patch('github_helper.requests')
@@ -62,7 +66,7 @@ class TestGithubHelper(unittest.TestCase):
         # Tests that a valid POST works.
         mock_req.post.return_value = mock_req_post
         type(mock_req_post).status_code = PropertyMock(return_value=200)
-        self.assertTrue(self.mocked_helper.post('asdf', 'ghjkl'))
+        self.assertIsNone(self.mocked_helper.post('asdf', 'ghjkl'))
 
     @patch('github_helper.requests.post')
     @patch('github_helper.requests')
@@ -71,7 +75,7 @@ class TestGithubHelper(unittest.TestCase):
         mock_req.get.return_value = mock_req_post
         type(mock_req_post).status_code = PropertyMock(return_value=400)
         mock_req.raise_for_status.side_effect = requests.exceptions.HTTPError
-        self.assertFalse( self.mocked_helper.post('asdf', 'ghjkl'))
+        self.assertIsNotNone(self.mocked_helper.post('asdf', 'ghjkl'))
 
     @patch('github_helper.requests.post')
     @patch('github_helper.requests')
@@ -80,7 +84,7 @@ class TestGithubHelper(unittest.TestCase):
         mock_req.get.return_value = mock_req_post
         type(mock_req_post).status_code = PropertyMock(return_value=400)
         mock_req.post.side_effect = requests.exceptions.Timeout
-        self.assertFalse( self.mocked_helper.post('asdf', 'ghjkl'))
+        self.assertIsNotNone(self.mocked_helper.post('asdf', 'ghjkl'))
 
     @patch('github_helper.requests.post')
     @patch('github_helper.requests')
@@ -89,4 +93,4 @@ class TestGithubHelper(unittest.TestCase):
         mock_req.get.return_value = mock_req_post
         type(mock_req_post).status_code = PropertyMock(return_value=400)
         mock_req.post.side_effect = requests.exceptions.RequestException
-        self.assertFalse( self.mocked_helper.post('asdf', 'ghjkl'))
+        self.assertIsNotNone(self.mocked_helper.post('asdf', 'ghjkl'))

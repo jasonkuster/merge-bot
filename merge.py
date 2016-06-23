@@ -31,7 +31,8 @@ def create_merger(config, work_queue):
     """
     if config['scm_type'] == 'github':
         return GitMerger(config, work_queue)
-    raise AttributeError('Unsupported SCM type: {}.'.format(config['scm_type']))
+    raise AttributeError(
+        'Unsupported SCM type: {}.'.format(config['scm_type']))
 
 
 class Merger(Thread):
@@ -41,13 +42,12 @@ class Merger(Thread):
 
     def __init__(self, config, work_queue):
         self.config = config
-        l = logging.getLogger(
-            '{name}_merge_logger'.format(name=self.config['name']))
-        f = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        h = logging.FileHandler(
-            os.path.join('log', '{name}_merger_log.txt'.format(
-                name=config['name'])), mode='w')
+        l = logging.getLogger('{name}_merge_logger'.format(
+            name=self.config['name']))
+        log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        f = logging.Formatter(log_fmt)
+        filename = '{name}_merger_log.txt'.format(name=config['name'])
+        h = logging.FileHandler(os.path.join('log', filename), mode='w')
         h.setFormatter(f)
         l.addHandler(h)
         l.setLevel(logging.INFO)
@@ -77,21 +77,10 @@ class GitMerger(Merger):
             pr_num = pr.get_num()
             self.main_logger.info(
                 'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
-            self.main_logger.info(
-                '{remaining} work items remaining.'.format(
-                    remaining=self.work_queue.qsize()))
-            output_file = '{name}_pr_{pr_num}_merge_log.txt'.format(
-                name=self.config['name'], pr_num=pr_num)
-            m_l = logging.getLogger(
-                '{name}_{num}_merge_logger'.format(name=self.config['name'],
-                                                   num=pr_num))
-            if not m_l.handlers:
-                f = logging.Formatter(
-                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-                h = logging.FileHandler(os.path.join('log', output_file))
-                h.setFormatter(f)
-                m_l.addHandler(h)
-                m_l.setLevel(logging.INFO)
+            self.main_logger.info('{remaining} work items remaining.'.format(
+                remaining=self.work_queue.qsize()))
+
+            m_l = self.get_logger()
             m_l.info('Starting merge process for #{}.'.format(pr_num))
 
             tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
@@ -106,13 +95,34 @@ class GitMerger(Merger):
                 self.main_logger.info(
                     'PR#{num} processing done.'.format(num=pr_num))
             else:
-                m_l.info('Merge did not conclude satisfactorily ('
-                         'reporting to github failed). Adding PR back to'
-                         ' queue to be tried again.')
+                m_l.info('Merge did not conclude satisfactorily (reporting to'
+                         ' github failed). Adding PR back to queue to be tried'
+                         ' again.')
                 self.main_logger.info(
                     'PR#{num} processing failed.'.format(num=pr_num))
                 self.work_queue.put(pr)
             _clean_up(tmp_dir)
+
+    def get_logger(self, pr_num):
+        """get_logger returns a logger for a particular PR.
+
+        Args:
+            pr_num: The pull request number.
+        Returns:
+            logger configured to output to an appropriate file.
+        """
+        output_file = '{name}_pr_{pr_num}_merge_log.txt'.format(
+            name=self.config['name'], pr_num=pr_num)
+        m_l = logging.getLogger('{name}_{num}_merge_logger'.format(
+            name=self.config['name'], num=pr_num))
+        if not m_l.handlers:
+            log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            f = logging.Formatter(log_fmt)
+            h = logging.FileHandler(os.path.join('log', output_file))
+            h.setFormatter(f)
+            m_l.addHandler(h)
+            m_l.setLevel(logging.INFO)
+        return m_l
 
     def merge_git_pr(self, pr, tmp_dir, m_l):
         """merge_git_pr merges git pull requests.
@@ -199,11 +209,11 @@ class GitMerger(Merger):
                     'error': 'Verification failed. Please check the error log'
                              ' and try again.',
                 },
-                #{
+                # {
                 #    'cmd': 'git push {remote_name} HEAD:{branch}',
                 #    'desc': 'Push to remote master.',
                 #    'error': 'Remote push failed. Please try again.',
-                #},
+                # },
             ]
             for command in cmds:
                 shell = True if 'shell' in command else False
@@ -252,8 +262,8 @@ class GitMerger(Merger):
         m_l.info('Starting: {}.'.format(desc.format(**fmt_dict)))
         m_l.info('Running command: {}.'.format(cmd_formatted))
         try:
-            out = check_output(cmd_formatted, cwd=tmp_dir, shell=shell,
-                               stderr=STDOUT)
+            out = check_output(cmd_formatted, cwd=tmp_dir,
+                               shell=shell, stderr=STDOUT)
             for line in out.split('\n'):
                 m_l.info(line)
         except Exception as exc:
