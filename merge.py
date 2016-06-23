@@ -8,8 +8,10 @@ they work, and then submit.
 import abc
 import logging
 import os
-from subprocess import check_call
+import shlex
+from subprocess import check_call, check_output, STDOUT
 from threading import Thread
+
 
 APACHE_GIT = 'https://git-wip-us.apache.org/repos/asf/{repo}.git'
 GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
@@ -88,10 +90,9 @@ class GitMerger(Merger):
                     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
                 h = logging.FileHandler(os.path.join('log', output_file))
                 h.setFormatter(f)
-                m_l.addHandler(f)
+                m_l.addHandler(h)
                 m_l.setLevel(logging.INFO)
-            m_l.info('Starting merge process for #{}.'.format(
-                pr.get_num()))
+            m_l.info('Starting merge process for #{}.'.format(pr_num))
 
             tmp_dir = TMP_DIR_FMT.format(dir='{}-{}'.format(
                 self.config['repository'], pr_num))
@@ -191,7 +192,6 @@ class GitMerger(Merger):
                     'cmd': 'git merge --no-ff -m "{msg}" {pr_name}',
                     'desc': 'Merge PR',
                     'error': 'Merge was not successful. Please try again.',
-                    'shell': True,
                 },
                 {
                     'cmd': self.config['verification_command'],
@@ -248,11 +248,14 @@ class GitMerger(Merger):
             EnvironmentError: If PR comment couldn't be posted to Github.
         """
         cmd_full = cmd.format(**fmt_dict)
-        cmd_formatted = cmd_full if shell else cmd_full.split(' ')
+        cmd_formatted = cmd_full if shell else shlex.split(cmd_full)
         m_l.info('Starting: {}.'.format(desc.format(**fmt_dict)))
         m_l.info('Running command: {}.'.format(cmd_formatted))
         try:
-            check_call(cmd_formatted, cwd=tmp_dir, shell=shell)
+            out = check_output(cmd_formatted, cwd=tmp_dir, shell=shell,
+                               stderr=STDOUT)
+            for line in out.split('\n'):
+                m_l.info(line)
         except Exception as exc:
             m_l.error(exc)
             pr.post_error(error.format(**fmt_dict))

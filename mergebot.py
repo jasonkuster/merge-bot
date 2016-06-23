@@ -5,7 +5,6 @@
 import glob
 import logging
 from multiprocessing import Pool
-import os
 import signal
 import mergebot_poller
 import yaml

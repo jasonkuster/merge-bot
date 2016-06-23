@@ -1,6 +1,0 @@
---- 
-default_branch: master
-name: apache
-repository: apache
-scm_type: github
-verification_command: "mvn clean verify"

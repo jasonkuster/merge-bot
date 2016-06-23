@@ -39,7 +39,6 @@ class MergebotPoller(object):
     def __init__(self, config):
         self.config = config
         # Instantiate the two variables used for tracking work.
-        # Thread-safe because of the GIL.
         self.work_queue = Queue()
         self.known_work = {}
         l = logging.getLogger('{name}_logger'.format(name=config['name']))
