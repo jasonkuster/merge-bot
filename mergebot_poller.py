@@ -14,7 +14,7 @@ import merge
 
 # TODO(jasonkuster): Fetch authorized users from somewhere official.
 AUTHORIZED_USERS = ['davorbonaci', 'jasonkuster']
-BOT_NAME = 'beam-testing'
+BOT_NAME = 'apache-merge-bot'
 
 
 def create_poller(config):
