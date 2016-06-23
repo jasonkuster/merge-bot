@@ -38,7 +38,7 @@ class TestGithubHelper(unittest.TestCase):
         self.mocked_helper.get = mock_get
         res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
-        self.assertIsNone(err)
+        self.assertIsNotNone(err)
 
     @patch('github_helper.GithubHelper.get')
     @patch('github_helper.GithubPR')
@@ -48,7 +48,7 @@ class TestGithubHelper(unittest.TestCase):
         self.mocked_helper.get = mock_get
         res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
-        self.assertIsNone(err)
+        self.assertIsNotNone(err)
 
     @patch('github_helper.GithubHelper.get')
     @patch('github_helper.GithubPR')
@@ -58,7 +58,7 @@ class TestGithubHelper(unittest.TestCase):
         self.mocked_helper.get = mock_get
         res, err = self.mocked_helper.fetch_prs()
         self.assertEqual(res, [])
-        self.assertIsNone(err)
+        self.assertIsNotNone(err)
 
     @patch('github_helper.requests.post')
     @patch('github_helper.requests')

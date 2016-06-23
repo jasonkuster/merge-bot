@@ -6,7 +6,8 @@ from mock import patch
 class GithubPollerTest(unittest.TestCase):
 
     def setUp(self):
-        self.args = {'repository': 'asdf', 'scm_type': 'github'}
+        self.args = {'repository': 'asdf', 'name': 'test', 'scm_type': 'github',
+                     'github_org': 'testing'}
         self.gp = mergebot_poller.GithubPoller(self.args)
 
     @patch('mergebot_poller.GithubPoller')
@@ -93,7 +94,7 @@ class GithubPollerTest(unittest.TestCase):
     def testSearchUnauthorizedUser(self, mock_merge_git, mock_comment, mock_pr):
         # Tests that a command by an unauthorized user is caught successfully.
         self.gp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@merge-bot command'
+        mock_comment.get_body.return_value = '@apache-merge-bot command'
         mock_comment.get_user.return_value = 'unauthorized'
         mock_pr.fetch_comments.return_value = [mock_comment]
         mock_pr.post_error.return_value = True
@@ -112,10 +113,10 @@ class GithubPollerTest(unittest.TestCase):
         # Tests that a command by an unauthorized user is caught successfully,
         #  but if the post fails we still return false.
         self.gp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@merge-bot command'
+        mock_comment.get_body.return_value = '@apache-merge-bot command'
         mock_comment.get_user.return_value = 'unauthorized'
         mock_pr.fetch_comments.return_value = [mock_comment]
-        mock_pr.post_error.return_value = False
+        mock_pr.post_error.side_effect = EnvironmentError
         search = self.gp.search_github_pr(mock_pr)
         self.assertFalse(search)
         mock_pr.post_error.assert_called_with("User unauthorized not a "
@@ -128,11 +129,11 @@ class GithubPollerTest(unittest.TestCase):
     def testSearchInvalidCommand(self, mock_merge_git, mock_comment, mock_pr):
         # Tests that an invalid comment on a valid PR is caught successfully.
         self.gp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@merge-bot command'
+        mock_comment.get_body.return_value = '@apache-merge-bot command'
         mock_comment.get_user.return_value = 'authorized'
         mergebot_poller.AUTHORIZED_USERS = ['authorized']
         mock_pr.fetch_comments.return_value = [mock_comment]
-        mock_pr.post_error.return_value = True
+        mock_pr.post_error.return_value = None
         search = self.gp.search_github_pr(mock_pr)
         self.assertTrue(search)
         mock_pr.post_error.assert_called_with("Command was command, not a valid"
@@ -148,11 +149,11 @@ class GithubPollerTest(unittest.TestCase):
         # Tests that an invalid comment on a valid PR is caught successfully,
         #  but if the post fails we still return false.
         self.gp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@merge-bot command'
+        mock_comment.get_body.return_value = '@apache-merge-bot command'
         mock_comment.get_user.return_value = 'authorized'
         mergebot_poller.AUTHORIZED_USERS = ['authorized']
         mock_pr.fetch_comments.return_value = [mock_comment]
-        mock_pr.post_error.return_value = False
+        mock_pr.post_error.side_effect = EnvironmentError
         search = self.gp.search_github_pr(mock_pr)
         self.assertFalse(search)
         mock_pr.post_error.assert_called_with("Command was command, not a valid"
@@ -165,8 +166,8 @@ class GithubPollerTest(unittest.TestCase):
     @patch('mergebot_poller.GithubPoller.merge_git')
     def testSearchValidCommand(self, mock_merge_git, mock_comment, mock_pr):
         # Tests that valid commands are successfully piped through.
-        self.gp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@merge-bot merge'
+        self.gp.COMMANDS['merge'] = mock_merge_git
+        mock_comment.get_body.return_value = '@apache-merge-bot merge'
         mock_comment.get_user.return_value = 'authorized'
         mergebot_poller.AUTHORIZED_USERS = ['authorized']
         mock_pr.fetch_comments.return_value = [mock_comment]
