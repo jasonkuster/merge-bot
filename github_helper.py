@@ -28,9 +28,8 @@ class GithubHelper(object):
 
         Returns:
             A tuple of (pr_list, error).
-            pr_list contains an iterable containing instances of GithubPR if
-            successful; empty list otherwise.
-            error is None if no errors, else error message.
+            pr_list is an iterable of GithubPRs if successful, otherwise empty.
+            error is None if successful, or the error message otherwise.
         """
         try:
             prs = self.get(GITHUB_PULLS_ENDPOINT)
@@ -41,7 +40,7 @@ class GithubHelper(object):
             return [], 'Request timed out: {}'.format(exc)
         except RequestException as exc:
             return [], 'Catastrophic error in requests: {}'.format(exc)
-        return [], 'Unknown Error'
+        return [], 'Unreachable Error'
 
     def get(self, endpoint):
         """get makes a GET request against a specified endpoint.
@@ -88,7 +87,7 @@ class GithubHelper(object):
             return 'Request timed out: {}'.format(exc)
         except RequestException as exc:
             return 'Catastrophic error in requests: {}'.format(exc)
-        return 'Unknown Error'
+        return 'Unreachable Error'
 
 
 class GithubPR(object):
@@ -159,6 +158,7 @@ class GithubPR(object):
         """
         err = self.helper.post(content, self.comments_url)
         if err is not None:
+            # TODO(jasonkuster): Create a custom error to raise here.
             raise EnvironmentError(
                 "Couldn't post to Github: {err}.".format(err=err))
 
