@@ -26,34 +26,48 @@ class Command(object):
         self.shell = shell
 
 
+# Commands to merge a Github PR.
+# Environment variables will be:
+#     'apache_url': URL for the Apache repository to push to.
+#     'branch': Branch to push to
+#     'branch_path': Full path to the branch
+#     'msg': Commit message
+#     'remote_name': What to call the remote
+#     'repo': Which Github repository to pull from
+#     'repo_url': The url of the Github repository
+#     'pr_name': Pull request name
+#     'pr_num': Pull request number
+#     'verification_cmd': Command to run to verify PR should be merged
 GIT_CMDS = [
-    Command('git clone -b {branch} {repo_url} .', 'Clone',
-            'Clone failed. Please try again.'),
-    Command('git remote add {remote_name} {apache_url}', 'Add Remote',
-            'Failed to add remote. Please try again.'),
+    Command('git clone -b {branch} {repo_url} .', desc='Clone',
+            error='Clone failed. Please try again.'),
+    Command('git remote add {remote_name} {apache_url}', desc='Add Remote',
+            error='Failed to add remote. Please try again.'),
     Command('git remote rename origin github', 'Rename Origin',
-            'Failed to rename origin. Please try again.'),
+            error='Failed to rename origin. Please try again.'),
     Command('git config --local --add remote.github.fetch '
             '"+refs/pull/*/head:refs/remotes/github/pr/*"',
-            'Configure git fetch.',
-            'Failed to configure git fetch. Please try again.',
+            desc='Configure git fetch.',
+            error='Failed to configure git fetch. Please try again.',
             shell=True),
-    Command('git fetch --all', 'Fetch everything.',
-            'Fetch failed. Please try again.'),
-    Command('git checkout -b {pr_name} github/pr/{pr_num}', 'Checkout PR',
-            'Failed to check out PR. Please try again.'),
-    Command('git rebase {branch_path}', 'Rebase against target branch.',
-            'Automatic rebase failed. Please manually rebase against'
+    Command('git fetch --all', desc='Fetch everything.',
+            error='Fetch failed. Please try again.'),
+    Command('git checkout -b {pr_name} github/pr/{pr_num}', desc='Checkout PR',
+            error='Failed to check out PR. Please try again.'),
+    Command('git rebase {branch_path}', desc='Rebase against target branch.',
+            error='Automatic rebase failed. Please manually rebase against'
             ' {branch_path} and try again.'),
-    Command('git checkout {branch_path}', 'Check out target branch.',
-            'Failed to check out {branch_path}. Please try again.'),
-    Command('git merge --no-ff -m "{msg}" {pr_name}', 'Merge PR',
-            'Merge was not successful. Please try again.'),
-    Command('{verification_command}', 'Verifying PR',
-            'Verification failed. Please check the error log and try again.'),
+    Command('git checkout {branch_path}', desc='Check out target branch.',
+            error='Failed to check out {branch_path}. Please try again.'),
+    Command('git merge --no-ff -m "{msg}" {pr_name}', desc='Merge PR',
+            error='Merge was not successful. Please try again.'),
+    Command('{verification_command}', desc='Verifying PR',
+            error='Verification failed. Please check the error log and try '
+               'again.'),
     # TODO(jasonkuster): Turn this on once we have guidance from Apache Infra.
-    # Command('git push {remote_name} HEAD:{branch}', 'Push to remote master.',
-    #         'Remote push failed. Please try again.'),
+    # Command('git push {remote_name} HEAD:{branch}',
+    #         desc='Push to remote master.',
+    #         error='Remote push failed. Please try again.'),
 ]
 
 def create_merger(config, work_queue):
@@ -124,7 +138,7 @@ class GitMerger(Merger):
             pr_logger = self.get_logger()
             pr_logger.info('Starting merge process for #{}.'.format(pr_num))
 
-            if self.merge_git_pr(pr, tmp_dir, pr_logger):
+            if self.merge_git_pr(pr, pr_logger):
                 pr_logger.info('Merge concluded satisfactorily. Moving on.')
                 self.merge_logger.info(
                     'PR#{num} processing done.'.format(num=pr_num))
@@ -135,7 +149,6 @@ class GitMerger(Merger):
                 self.merge_logger.info(
                     'PR#{num} processing failed.'.format(num=pr_num))
                 self.work_queue.put(pr)
-            _clean_up(tmp_dir)
 
     def get_logger(self, pr_num):
         """get_logger returns a logger for a particular PR.
@@ -159,13 +172,12 @@ class GitMerger(Merger):
             pr_logger.setLevel(logging.INFO)
         return pr_logger
 
-    def merge_git_pr(self, pr, tmp_dir, pr_logger):
+    def merge_git_pr(self, pr, pr_logger):
         """merge_git_pr merges git pull requests.
 
         Args:
             pr: The GithubPR to merge.
-            tmp_dir: The directory in which to do work.
-            pr_logger: merge logger
+            pr_logger: pr logger
         Returns:
             True if merge was concluded satisfactorily (merged successfully,
             or failed due to supposed fault of the PR itself).
@@ -218,7 +230,7 @@ class GitMerger(Merger):
             fmt_dict: Dictionary of parameters with which to format the
             command and other strings.
             pr: Pull request being merged.
-            pr_logger: merge logger.
+            pr_logger: pr logger.
         Raises:
             AssertionError: If command was not successful.
             EnvironmentError: If PR comment couldn't be posted to Github.
