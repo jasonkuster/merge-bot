@@ -61,7 +61,7 @@ GIT_CMDS = [
             error='Failed to check out {branch_path}. Please try again.'),
     Command('git merge --no-ff -m "{msg}" {pr_name}', desc='Merge PR',
             error='Merge was not successful. Please try again.'),
-    Command('{verification_command}', desc='Verifying PR',
+    Command('{verification_cmd}', desc='Verifying PR',
             error='Verification failed. Please check the error log and try '
                'again.'),
     # TODO(jasonkuster): Turn this on once we have guidance from Apache Infra.
@@ -136,7 +136,7 @@ class GitMerger(Merger):
             # Note on loggers: merge_logger is for merge-level events:
             # started work, finished work, etc. pr_logger is for pr-merging
             # lifecycle events: clone, merge, push, etc.
-            pr_logger = self.get_logger()
+            pr_logger = self.get_logger(pr_num)
             pr_logger.info('Starting merge process for #{}.'.format(pr_num))
 
             if self.merge_git_pr(pr, pr_logger):
@@ -256,11 +256,11 @@ class GitMerger(Merger):
             except Exception as exc:
                 pr_logger.error(exc)
                 pr.post_error(cmd.error.format(**fmt_dict))
+                _clean_up(tmp_dir)
                 raise AssertionError('Command "{}" failed.'.format(
                     cmd_formatted))
-            finally:
-                _clean_up(tmp_dir)
             pr_logger.info('Finished: {}.'.format(cmd.desc.format(**fmt_dict)))
+        _clean_up(tmp_dir)
 
 
 def _set_up(tmp_dir):

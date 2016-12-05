@@ -85,6 +85,7 @@ class GithubPoller(MergebotPoller):
         self.merger.start()
         # Loop: Forever, every fifteen seconds.
         while True:
+            self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
                 self.l.error('Error fetching PRs: {err}.'.format(err=err))
