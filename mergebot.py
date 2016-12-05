@@ -28,8 +28,9 @@ def main():
     signal to shut down itself and its children.
     """
     l = logging.getLogger('mergebot')
-    log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    f = logging.Formatter(log_fmt)
+    log_fmt = '[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] %(message)s'
+    date_fmt = '%m/%d %H:%M:%S'
+    f = logging.Formatter(log_fmt, date_fmt)
     h = logging.StreamHandler()
     h.setFormatter(f)
     l.setLevel(logging.INFO)

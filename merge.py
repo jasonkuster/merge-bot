@@ -96,8 +96,9 @@ class Merger(Thread):
         self.config = config
         l = logging.getLogger('{name}_merge_logger'.format(
             name=self.config['name']))
-        log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        f = logging.Formatter(log_fmt)
+        log_fmt = '[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] %(message)s'
+        date_fmt = '%m/%d %H:%M:%S'
+        f = logging.Formatter(log_fmt, date_fmt)
         filename = '{name}_merger_log.txt'.format(name=config['name'])
         h = logging.FileHandler(os.path.join('log', filename), mode='w')
         h.setFormatter(f)
