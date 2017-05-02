@@ -17,7 +17,7 @@ AUTHORIZED_USERS = ['davorbonaci', 'jasonkuster']
 BOT_NAME = 'apache-merge-bot'
 
 
-def create_poller(config):
+def create_poller(config, comm_pipe):
     """create_poller creates a poller of the type specified in the config.
 
     Args:
@@ -28,7 +28,7 @@ def create_poller(config):
         AttributeError: if passed an unsupported SCM type.
     """
     if config['scm_type'] == 'github':
-        return GithubPoller(config)
+        return GithubPoller(config, comm_pipe)
     raise AttributeError('Unsupported SCM Type: {}.'.format(config['scm_type']))
 
 
@@ -36,8 +36,10 @@ class MergebotPoller(object):
     """MergebotPoller is a base class for polling SCMs.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, comm_pipe):
         self.config = config
+        self.comm_pipe = parent_queue
+        # TODO(jasonkuster): Hand the queue off to the heartbeat publisher.
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
@@ -66,8 +68,8 @@ class GithubPoller(MergebotPoller):
     """GithubPoller polls Github repositories and merges them.
     """
 
-    def __init__(self, config):
-        super(GithubPoller, self).__init__(config)
+    def __init__(self, config, comm_pipe):
+        super(GithubPoller, self).__init__(config, comm_pipe)
         self.COMMANDS = {'merge': self.merge_git}
         # Set up a github helper for handling network requests, etc.
         self.github_helper = github_helper.GithubHelper(
@@ -85,6 +87,12 @@ class GithubPoller(MergebotPoller):
         self.merger.start()
         # Loop: Forever, every fifteen seconds.
         while True:
+            if self.comm_pipe.poll():
+                t = self.comm_pipe.recv()
+                if t == 'terminate':
+                    return
+            hb = datetime.now().strftime('%H:%M:%S-%Y-%m-%d')
+            self.comm_pipe.send('hb: {hb}'.format(hb=hb))
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
