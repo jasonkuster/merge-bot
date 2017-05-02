@@ -2,21 +2,23 @@
 """Mergebot is a program which merges approved SCM changes into a master repo.
 """
 
+from collections import namedtuple
+from datetime import datetime
 import glob
 import logging
-from multiprocessing import Pool
+from multiprocessing import Pool, Pipe
 import signal
 import mergebot_poller
 import yaml
 
 
-def poll_scm(config):
+def poll_scm(config, queue):
     """poll_scm handles delegating a single repository's work to an SCM poller.
 
     Args:
         config: A dictionary of configuration to use for the poller.
     """
-    poller = mergebot_poller.create_poller(config)
+    poller = mergebot_poller.create_poller(config, queue)
     poller.poll()
 
 
@@ -49,29 +51,70 @@ def main():
                 l.error('Error parsing file {}: {}.'.format(filename, exc))
                 l.error('Please fix and try again.')
                 return
+
+    MergerInfo = namedtuple('MergerInfo', ['process', 'pipe', 'last_heartbeat'])
+    mergers = []
+    for config in configs:
+        parent_pipe, child_pipe = Pipe()
+        p = Process(target=poll_scm, args=(config, child_pipe,))
+        mergers.append(MergerInfo(
+            process=p,
+            pipe=parent_pipe,
+            last_heartbeat=datetime.now()))
+        l.info('Starting poller for {}.'.format(config.name))
+        p.start()
+
+    try:
+        while True:
+            for merger in mergers:
+                msgs = []
+                while merger.queue.poll():
+                    msgs.append(merger.pipe.recv())
+                for msg in msgs:
+                    # Check heartbeat, update last heard from, etc.
+                    # msgs will be FIFO, so update last_heartbeat as we go.
+                    if msg.startswith('hb: '):
+                        merger.last_heartbeat  = datetime.strptime(
+                            msg[len('hb: '):],
+                            '%H:%M:%S-%Y-%m-%d')
+                    ts = datetime.now() - merger.last_heartbeat).total_seconds()
+                    if ts > 60:
+                        l.warn('houston we have a problem')
+                        # do something
+    except KeyboardInterrupt:
+        l.info('Caught KeyboardInterrupt; killing children and ending.')
+
+    for merger in mergers:
+        merger.pipe.send('terminate')
+
+    for merger in mergers:
+        merger.process.join()
+
+    l.info('Children killed, done.')
+
     # Workaround for multiprocessing SIGINT problems per
     # http://stackoverflow.com/questions/11312525 and the like. Children need to
     # ignore SIGINT; parent should obey and clean up itself.
-    original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    pool = Pool(len(configs))
-    signal.signal(signal.SIGINT, original_sigint_handler)
+    # original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # pool = Pool(len(configs))
+    # signal.signal(signal.SIGINT, original_sigint_handler)
 
-    try:
-        l.info('Starting Poller Pool')
-        pool.map_async(poll_scm, configs)
-        while True:
-            input('Mergebot running; press Ctrl + C to cancel.\n')
-    except KeyboardInterrupt:
-        l.info('Exiting.')
-        pool.terminate()
-    else:
+    # try:
+        # l.info('Starting Poller Pool')
+        # pool.map_async(poll_scm, configs)
+        # while True:
+        #     input('Mergebot running; press Ctrl + C to cancel.\n')
+    # except KeyboardInterrupt:
+        # l.info('Exiting.')
+        # pool.terminate()
+    # else:
         # Generally this shouldn't happen - pollers should run forever.
-        pool.close()
-        pool.join()
+        # pool.close()
+        # pool.join()
         # TODO(jasonkuster): We could get into a state where we're only polling
         # one repo and all others have crashed. Once mergebot is functional,
         # work on better poller management.
-        l.error('Mergebot terminated early. All pollers must have crashed.')
+        # l.error('Mergebot terminated early. All pollers must have crashed.')
 
 
 if __name__ == '__main__':
