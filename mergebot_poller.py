@@ -5,6 +5,7 @@ inherit and a create_poller method which allows creation of SCM pollers.
 """
 
 
+from datetime import datetime
 import logging
 from multiprocessing import Queue
 import os
@@ -38,7 +39,7 @@ class MergebotPoller(object):
 
     def __init__(self, config, comm_pipe):
         self.config = config
-        self.comm_pipe = parent_queue
+        self.comm_pipe = comm_pipe
         # TODO(jasonkuster): Hand the queue off to the heartbeat publisher.
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()

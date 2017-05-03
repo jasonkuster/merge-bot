@@ -1,0 +1,7 @@
+--- 
+merge_branch: master
+name: jason
+github_org: jasonkuster
+repository: beam
+scm_type: github
+verification_command: "mvn clean install"
