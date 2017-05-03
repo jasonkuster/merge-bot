@@ -6,7 +6,7 @@ from collections import namedtuple
 from datetime import datetime
 import glob
 import logging
-from multiprocessing import Pool, Pipe
+from multiprocessing import Pipe, Process
 import signal
 import mergebot_poller
 import yaml
@@ -52,6 +52,7 @@ def main():
                 l.error('Please fix and try again.')
                 return
 
+    # Start up processes for each merger for which we have a config.
     MergerInfo = namedtuple('MergerInfo', ['process', 'pipe', 'last_heartbeat'])
     mergers = []
     for config in configs:
@@ -64,6 +65,7 @@ def main():
         l.info('Starting poller for {}.'.format(config.name))
         p.start()
 
+    # Watch heartbeats of mergers
     try:
         while True:
             for merger in mergers:
@@ -77,8 +79,11 @@ def main():
                         merger.last_heartbeat  = datetime.strptime(
                             msg[len('hb: '):],
                             '%H:%M:%S-%Y-%m-%d')
-                    ts = datetime.now() - merger.last_heartbeat).total_seconds()
+                    ts = (datetime.now() -
+                          merger.last_heartbeat).total_seconds()
                     if ts > 60:
+                        # TODO(jasonkuster): Restart the process.
+                        # TODO(jasonkuster): How do we preserve queue?
                         l.warn('houston we have a problem')
                         # do something
     except KeyboardInterrupt:
