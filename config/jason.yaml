@@ -1,7 +1,9 @@
---- 
-merge_branch: master
+---
 name: jason
 github_org: jasonkuster
 repository: beam
+merge_branch: master
+verification_branch: mergebot
 scm_type: github
-verification_command: "mvn clean install"
+jenkins_location: https://35.184.226.36
+verification_job_name: beam-merge-1

@@ -97,6 +97,7 @@ class GithubPR(object):
     def __init__(self, helper, pr_object):
         self.helper = helper
         self.pr_num = pr_object['number']
+        self.head_sha = pr_object['head']['sha']
         self.comments_url = pr_object['comments_url']
         self.updated = dateutil.parser.parse(pr_object['updated_at'])
 
@@ -146,6 +147,7 @@ class GithubPR(object):
         Raises:
             EnvironmentError: If post to Github failed.
         """
+        # TODO(jasonkuster) it seems reasonable to catch the error here instead?
         self.post_pr_comment('Info: {}.'.format(content))
 
     def post_pr_comment(self, content):
