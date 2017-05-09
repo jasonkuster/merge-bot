@@ -3,12 +3,14 @@
 The merger interacts with the underlying SCM to patch specific changes, verify
 they work, and then submit.
 """
-
+import time
 
 import abc
 import logging
 import os
 import shlex
+from jenkinsapi.jenkins import Jenkins
+from jenkinsapi.custom_exceptions import NotFound
 from subprocess import check_call, check_output, STDOUT
 from threading import Thread
 
@@ -18,6 +20,7 @@ GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
 TMP_DIR_FMT = '/tmp/{dir}'
 
 
+# TODO(jasonkuster): Evaluate moving to collections.namedtuple
 class Command(object):
     def __init__(self, command, desc, error, shell=False):
         self.command = command
@@ -38,7 +41,7 @@ class Command(object):
 #     'pr_name': Pull request name
 #     'pr_num': Pull request number
 #     'verification_cmd': Command to run to verify PR should be merged
-GIT_CMDS = [
+GIT_PREPARE_CMDS = [
     Command('git clone -b {branch} {repo_url} .', desc='Clone',
             error='Clone failed. Please try again.'),
     Command('git remote add {remote_name} {apache_url}', desc='Add Remote',
@@ -55,20 +58,30 @@ GIT_CMDS = [
     Command('git checkout -b {pr_name} github/pr/{pr_num}', desc='Checkout PR',
             error='Failed to check out PR. Please try again.'),
     Command('git rebase {branch_path}', desc='Rebase against target branch.',
-            error='Automatic rebase failed. Please manually rebase against'
+            error='Automatic rebase failed. Please rebase branch against'
             ' {branch_path} and try again.'),
     Command('git checkout {branch_path}', desc='Check out target branch.',
             error='Failed to check out {branch_path}. Please try again.'),
     Command('git merge --no-ff -m "{msg}" {pr_name}', desc='Merge PR',
             error='Merge was not successful. Please try again.'),
-    Command('{verification_cmd}', desc='Verifying PR',
-            error='Verification failed. Please check the error log and try '
-               'again.'),
+]
+    # Command('{verification_cmd}', desc='Verifying PR',
+    #         error='Verification failed. Please check the error log and try '
+    #         'again.'),
+GIT_VERIFICATION_CMDS = [
+    Command('git push -f {remote_name} HEAD:{verification_branch}',
+            desc='Force push to verification branch.',
+            error='Couldn\'t complete force push to verification branch. '
+                  'Please try again.')
+]
+
+GIT_FINAL_CMDS = [
     # TODO(jasonkuster): Turn this on once we have guidance from Apache Infra.
     # Command('git push {remote_name} HEAD:{branch}',
     #         desc='Push to remote master.',
     #         error='Remote push failed. Please try again.'),
 ]
+
 
 def create_merger(config, work_queue):
     """create_merger creates a merger of the type specified in the config.
@@ -186,6 +199,7 @@ class GitMerger(Merger):
             retried.
         """
         branch = self.config['merge_branch']
+        verification_branch = self.config['verification_branch']
         org = self.config['github_org']
         remote_name = 'apache'
         repo = self.config['repository']
@@ -199,10 +213,10 @@ class GitMerger(Merger):
             'repo_url': GITHUB_REPO_URL.format(org=org, repo=repo),
             'pr_name': 'finish-pr-{}'.format(pr.get_num()),
             'pr_num': pr.get_num(),
-            'verification_cmd': self.config['verification_command']
+            'verification_branch': verification_branch,
         }
         try:
-            self.run_cmds(GIT_CMDS, pr_vars, pr, pr_logger)
+            self.run_cmds(GIT_PREPARE_CMDS, pr_vars, pr, pr_logger)
         except AssertionError as err:
             pr_logger.error(err)
             return True
@@ -214,6 +228,40 @@ class GitMerger(Merger):
         except Exception as err:
             pr_logger.error(err)
             return False
+        pr_logger.info("Successfully finished pre-verification phase.")
+
+        pr_logger.info("Starting verification phase.")
+        jenkins = Jenkins(self.config['jenkins_location'])
+        job = jenkins[self.config['verification_job_name']]
+        buildnum = job.get_next_build_number()
+        try:
+            self.run_cmds(GIT_VERIFICATION_CMDS, pr_vars, pr, pr_logger)
+        except AssertionError as err:
+            pr_logger.error(err)
+            return True
+        except EnvironmentError as err:
+            pr_logger.error("Failed posting back to GitHub about verification. "
+                            "Likely a problem with the repository, this should "
+                            "be investigated.")
+            pr_logger.error(err)
+            return True
+
+        if not self.verify_pr_via_jenkins(job, buildnum, pr, pr_logger):
+            try:
+                pr.post_error('Job failed in verification; check the Jenkins')
+            except Exception:
+                # There is so much boilerplate because of this -- it should just
+                # log the failure and move on instead of having to catch every
+                # freaking time.
+                pass
+            return True
+
+        try:
+            self.run_cmds(GIT_FINAL_CMDS)
+        except:
+            # Some stuff, I can't deal with boilerplate rn.
+            return True  # ?
+
         try:
             pr.post_info('PR merge succeeded!')
             pr_logger.info('Merge for {pr_num} completed successfully.'.format(
@@ -222,6 +270,37 @@ class GitMerger(Merger):
             info = 'Pull Request success post failed. Moving on. {}'.format(err)
             pr_logger.info(info)
         return True
+
+    def verify_pr_via_jenkins(self, job, buildnum, pr, pr_logger):
+        job_start_timeout = 300
+        wait_interval = 10
+        wait_secs = 0
+        build = None
+        while wait_secs < job_start_timeout:
+            try:
+                build = job.get_build(buildnum)
+            except NotFound:
+                pr_logger.info("waiting on job start, %d secs.".format(
+                    wait_secs))
+                # TODO(jasonkuster) post somewhere about this
+            time.sleep(wait_interval)
+            wait_secs += wait_interval
+        if not build:
+            raise NotFound
+
+        if build.get_
+
+        try:
+            pr.post_info('Job verification started. '
+                         'Verification job %s.'.format(
+                '%s/job/%s'.format(self.config['jenkins_location'],
+                                   self.config['verification_job_name'])))
+        except EnvironmentError as err:
+            pr_logger.error("Failed to post job status to GitHub. Continuing.")
+        build.block_until_complete()
+        if build.get_status() == "SUCCESS":
+            return True
+        return False
 
     def run_cmds(self, cmds, fmt_dict, pr, pr_logger):
         """Runs command.
