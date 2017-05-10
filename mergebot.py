@@ -2,7 +2,6 @@
 """Mergebot is a program which merges approved SCM changes into a master repo.
 """
 
-from collections import namedtuple
 from datetime import datetime
 import glob
 import logging
@@ -12,14 +11,21 @@ import mergebot_poller
 import yaml
 
 
-def poll_scm(config, queue):
+def poll_scm(config, pipe):
     """poll_scm handles delegating a single repository's work to an SCM poller.
 
     Args:
         config: A dictionary of configuration to use for the poller.
     """
-    poller = mergebot_poller.create_poller(config, queue)
+    poller = mergebot_poller.create_poller(config, pipe)
     poller.poll()
+
+
+class MergerInfo(object):
+  def __init__(self, process, pipe, last_heartbeat):
+    self.process = process
+    self.pipe = pipe
+    self.last_heartbeat = last_heartbeat
 
 
 def main():
@@ -53,8 +59,11 @@ def main():
                 return
 
     # Start up processes for each merger for which we have a config.
-    MergerInfo = namedtuple('MergerInfo', ['process', 'pipe', 'last_heartbeat'])
     mergers = []
+    # Workaround for multiprocessing SIGINT problems per
+    # http://stackoverflow.com/questions/11312525 and the like. Children need to
+    # ignore SIGINT; parent should obey and clean up itself.
+    original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
     for config in configs:
         parent_pipe, child_pipe = Pipe()
         p = Process(target=poll_scm, args=(config, child_pipe,))
@@ -62,23 +71,24 @@ def main():
             process=p,
             pipe=parent_pipe,
             last_heartbeat=datetime.now()))
-        l.info('Starting poller for {}.'.format(config.name))
+        l.info('Starting poller for {}.'.format(config['name']))
         p.start()
+    signal.signal(signal.SIGINT, original_sigint_handler)
 
     # Watch heartbeats of mergers
     try:
         while True:
             for merger in mergers:
                 msgs = []
-                while merger.queue.poll():
+                while merger.pipe.poll():
                     msgs.append(merger.pipe.recv())
                 for msg in msgs:
                     # Check heartbeat, update last heard from, etc.
                     # msgs will be FIFO, so update last_heartbeat as we go.
                     if msg.startswith('hb: '):
-                        merger.last_heartbeat  = datetime.strptime(
+                        merger.last_heartbeat = datetime.strptime(
                             msg[len('hb: '):],
-                            '%H:%M:%S-%Y-%m-%d')
+                            "%H:%M:%S-%Y-%m-%d")
                     ts = (datetime.now() -
                           merger.last_heartbeat).total_seconds()
                     if ts > 60:
