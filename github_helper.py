@@ -109,6 +109,14 @@ class GithubPR(object):
         """
         return self.pr_num
 
+    def get_head_sha(self):
+        """Gets the SHA corresponding to the commit at HEAD.
+
+        Returns:
+            HEAD SHA
+        """
+        return self.head_sha
+
     def get_updated(self):
         """Gets datetime of when the pull request was last updated.
 
@@ -129,40 +137,33 @@ class GithubPR(object):
             return [GithubComment(cmt) for cmt in comments]
         return []
 
-    def post_error(self, content):
+    def post_error(self, content, logger):
         """Posts an error as a comment to Github.
 
         Args:
             content: the content to post.
-        Raises:
-            EnvironmentError: If post to Github failed.
         """
-        self.post_pr_comment('Error: {}.'.format(content))
+        self.post_pr_comment('Error: {}'.format(content, logger))
 
-    def post_info(self, content):
+    def post_info(self, content, logger):
         """Posts an info-level message as a comment to Github.
 
         Args:
             content: the content to post.
-        Raises:
-            EnvironmentError: If post to Github failed.
         """
-        # TODO(jasonkuster) it seems reasonable to catch the error here instead?
-        self.post_pr_comment('Info: {}.'.format(content))
+        self.post_pr_comment('Info: {}'.format(content, logger))
 
-    def post_pr_comment(self, content):
+    def post_pr_comment(self, content, logger):
         """Posts a PR comment to Github.
 
         Args:
             content: the content to post.
-        Raises:
-            EnvironmentError: If post to Github failed.
         """
         err = self.helper.post(content, self.comments_url)
         if err is not None:
-            # TODO(jasonkuster): Create a custom error to raise here.
-            raise EnvironmentError(
-                "Couldn't post to Github: {err}.".format(err=err))
+            logger.error(
+                "Couldn't post comment '{cmt}' to Github: {err}.".format(
+                    cmt=content, err=err))
 
 
 class GithubComment(object):
