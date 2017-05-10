@@ -9,11 +9,13 @@ import abc
 import logging
 import os
 import shlex
+import urlparse
+
 from jenkinsapi.jenkins import Jenkins
 from jenkinsapi.custom_exceptions import NotFound
+from Queue import Empty
 from subprocess import check_call, check_output, STDOUT, CalledProcessError
 from threading import Thread
-
 
 TMP_DIR_FMT = '/tmp/{dir}'
 
@@ -26,7 +28,7 @@ class Command(object):
         self.shell = shell
 
 
-def create_merger(config, work_queue):
+def create_merger(config, work_queue, pipe):
     """create_merger creates a merger of the type specified in the config.
 
     Args:
@@ -38,7 +40,7 @@ def create_merger(config, work_queue):
         AttributeError: if passed an unsupported SCM type.
     """
     if config['scm_type'] == 'github':
-        return GitMerger(config, work_queue)
+        return GitMerger(config, work_queue, pipe)
     raise AttributeError(
         'Unsupported SCM type: {type}.'.format(type=config['scm_type']))
 
@@ -48,7 +50,7 @@ class Merger(Thread):
     """
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, config, work_queue):
+    def __init__(self, config, work_queue, pipe):
         self.config = config
         l = logging.getLogger('{name}_merge_logger'.format(
             name=self.config['name']))
@@ -62,6 +64,7 @@ class Merger(Thread):
         l.setLevel(logging.INFO)
         self.merge_logger = l
         self.work_queue = work_queue
+        self.pipe = pipe
         Thread.__init__(self)
 
     @abc.abstractmethod
@@ -128,13 +131,13 @@ class GitMerger(Merger):
     ]
 
     APACHE_GIT = 'https://git-wip-us.apache.org/repos/asf/{repo}.git'
-    GITHUB_REPO_URL = 'git:{org}/{repo}.git'
+    GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
 
     JOB_START_TIMEOUT = 300
     WAIT_INTERVAL = 10
 
-    def __init(self, config, work_queue):
-        super.__init__(self, config, work_queue)
+    def __init__(self, config, work_queue, pipe):
+        super(GitMerger, self).__init__(config, work_queue, pipe)
         branch = self.config['merge_branch']
         verification_branch = self.config['verification_branch']
         org = self.config['github_org']
@@ -157,39 +160,46 @@ class GitMerger(Merger):
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
+        terminate = False
         while True:
-            # TODO(jasonkuster) How do we confirm to the parent that this thread
-            # is still alive? What happens if an exception tanks us?
-            pr = self.work_queue.get()
-            pr_num = pr.get_num()
-            self.merge_logger.info(
-                'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
-            self.merge_logger.info('{remaining} work items remaining.'.format(
-                remaining=self.work_queue.qsize()))
-            pr.post_info(
-                'MergeBot starting work on PR#{pr_num}.'.format(pr_num=pr_num),
-                self.merge_logger)
-
-            # Note on loggers: merge_logger is for merge-level events:
-            # started work, finished work, etc. pr_logger is for pr-merging
-            # lifecycle events: clone, merge, push, etc.
-            pr_logger = self.get_logger(pr_num)
-            pr_logger.info('Starting merge process for #{pr_num}.'.format(
-                pr_num=pr_num))
-
-            tmp_dir = TMP_DIR_FMT.format(dir='{repo}-{pr_num}'.format(
-                repo=self.config['repository'],
-                pr_num=pr_num))
+            pr = None
+            while not pr:
+                if self.pipe.poll():
+                    msg = self.pipe.recv()
+                    if msg == 'terminate':
+                        terminate = True
+                        self.merge_logger.info('Caught termination signal.')
+                try:
+                    if not terminate:
+                        pr = self.work_queue.get(timeout=5)
+                        break
+                    while True:
+                        pr = self.work_queue.get_nowait()
+                        pr.post_info('MergeBot shutting down; please resubmit '
+                                     'when MergeBot is back up.',
+                                     self.merge_logger)
+                except Empty:
+                    if terminate:
+                        return
+                except BaseException:
+                    if terminate:
+                        return
             try:
-                _set_up(tmp_dir)
-                self.merge_git_pr(pr, tmp_dir, pr_logger)
-                pr_logger.info('Merge concluded satisfactorily. Moving on.')
+                pr_num = pr.get_num()
                 self.merge_logger.info(
-                    'PR#{num} processing done.'.format(num=pr_num))
-            except AssertionError as exc:
-                pr.post_error(exc, pr_logger)
-            finally:
-                _clean_up(tmp_dir)
+                    'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
+                self.merge_logger.info('{remaining} work items remaining.'.format(
+                    remaining=self.work_queue.qsize()))
+                pr.post_info(
+                    'MergeBot starting work on PR#{pr_num}.'.format(pr_num=pr_num),
+                    self.merge_logger)
+                self.merge_git_pr(pr)
+            except BaseException as exc:
+                pr.post_error('MergeBot encountered an unexpected error while '
+                              'processing this PR: {exc}.'.format(exc=exc),
+                              self.merge_logger)
+                self.merge_logger.error('Exception while merging PR: '
+                                        '{exc}.'.format(exc=exc))
 
     def get_logger(self, pr_num):
         """get_logger returns a logger for a particular PR.
@@ -205,7 +215,8 @@ class GitMerger(Merger):
         pr_logger = logging.getLogger('{name}_{num}_merge_logger'.format(
             name=self.config['name'], num=pr_num))
         if not pr_logger.handlers:
-            log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            log_fmt = ('[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] '
+                       '%(message)s')
             f = logging.Formatter(log_fmt)
             h = logging.FileHandler(os.path.join('log', output_file))
             h.setFormatter(f)
@@ -213,8 +224,42 @@ class GitMerger(Merger):
             pr_logger.setLevel(logging.INFO)
         return pr_logger
 
-    def merge_git_pr(self, pr, tmp_dir, pr_logger):
-        """merge_git_pr merges git pull requests.
+    def merge_git_pr(self, pr):
+        """merge_git_pr takes care of the overall merge process for a PR.
+
+        Args:
+            pr: An instance of github_helper.GithubPR to merge.
+        """
+        # Note on loggers: merge_logger is for merge-level events:
+        # started work, finished work, etc. pr_logger is for pr-merging
+        # lifecycle events: clone, merge, push, etc.
+        pr_num = pr.get_num()
+        pr_logger = self.get_logger(pr_num)
+        pr_logger.info('Starting merge process for #{pr_num}.'.format(
+            pr_num=pr_num))
+
+        tmp_dir = None
+        try:
+            tmp_dir = TMP_DIR_FMT.format(dir='{repo}-{pr_num}'.format(
+                repo=self.config['repository'],
+                pr_num=pr_num))
+            _set_up(tmp_dir)
+            self.execute_merge_lifecycle(pr, tmp_dir, pr_logger)
+            pr_logger.info('Merge concluded satisfactorily. Moving on.')
+            self.merge_logger.info(
+                'PR#{num} processing done.'.format(num=pr_num))
+        except AssertionError as exc:
+            pr.post_error(exc, pr_logger)
+        except BaseException as exc:
+            pr.post_error('MergeBot encountered an error: {exc}.'.format(
+                exc=exc), pr_logger)
+            pr_logger.error('Unhandled exception caught: {exc}.'.format(
+                exc=exc))
+        finally:
+            _clean_up(tmp_dir)
+
+    def execute_merge_lifecycle(self, pr, tmp_dir, pr_logger):
+        """execute_merge_lifecycle merges git pull requests.
 
         Args:
             pr: The GithubPR to merge.
@@ -255,12 +300,12 @@ class GitMerger(Merger):
         pr_logger.info('Merge for {pr_num} completed successfully.'.format(
             pr_num=pr.get_num()))
 
-    def verify_pr_via_jenkins(self, job, buildnum, pr, pr_logger):
+    def verify_pr_via_jenkins(self, job, build_num, pr, pr_logger):
         """Checks against the configured Jenkins job for verification.
 
         Args:
             job: jenkinsapi.job.Job this project uses for verification.
-            buildnum: Build number of verification build.
+            build_num: Build number of verification build.
             pr: github_helper.GithubPR corresponding to this pull request.
             pr_logger: Logger for this pull request.
         Raises:
@@ -272,7 +317,7 @@ class GitMerger(Merger):
         build = None
         while wait_secs < self.JOB_START_TIMEOUT:
             try:
-                build = job.get_build(buildnum)
+                build = job.get_build(build_num)
                 break
             except NotFound:
                 pr_logger.info("Waiting on job start, {wait} secs.".format(
@@ -280,10 +325,9 @@ class GitMerger(Merger):
             time.sleep(self.WAIT_INTERVAL)
             wait_secs += self.WAIT_INTERVAL
 
-        # TODO(jasonkuster) Use some sort of url joiner for this?
-        job_url = '{jenkins_loc}/job/{job_name}'.format(
-            jenkins_loc=self.config['jenkins_location'],
-            job_name=self.config['verification_job_name'])
+        job_url = urlparse.urljoin(
+            self.config['jenkins_location'], '/job/{job_name}/'.format(
+                job_name=self.config['verification_job_name']))
         if not build:
             pr_logger.error('Timed out trying to find the verification job.')
             raise AssertionError(
@@ -291,24 +335,14 @@ class GitMerger(Merger):
                 '({url}) to ensure job is configured correctly.'.format(
                     url=job_url))
 
-        pr_logger.info("Build #{build_num} found.".format(build_num=buildnum))
-        build_url = '{job_url}/{build_num}'.format(
-            job_url=job_url,
-            build_num=buildnum)
-        if build._get_git_rev() != pr.get_head_sha():
-            error = ('Build at {build_url} did not match HEAD SHA we were '
-                     'expecting. Expected: {expected}, actual {actual}.'.format(
-                build_url=build_url,
-                expected=pr.get_head_sha(),
-                actual=build._get_git_rev()))
-            pr_logger.error(error)
-            raise AssertionError(error)
+        pr_logger.info("Build #{build_num} found.".format(build_num=build_num))
+        build_url = urlparse.urljoin(job_url, str(build_num))
 
         text = ('Job verification started. Verification job is '
-                '[here]({job_url}) (may still be pending; if page 404s, '
-                'check job status page [here]({build_url})).'.format(
-            job_url=job_url,
-            build_url=build_url))
+                '[here]({build_url}) (may still be pending; if page 404s, '
+                'check job status page [here]({job_url})).'.format(
+            build_url=build_url,
+            job_url=job_url))
         pr.post_info(text, pr_logger)
 
         build.block_until_complete()
@@ -316,7 +350,7 @@ class GitMerger(Merger):
         # For some reason, the build does not have a status upon completion and
         # we have to fetch it again. A fairly extensive live debug failed to
         # find job status anywhere on the object.
-        build = job.get_build(buildnum)
+        build = job.get_build(build_num)
         if build.get_status() == "SUCCESS":
             return True
         return False

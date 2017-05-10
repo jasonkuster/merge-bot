@@ -7,7 +7,7 @@ inherit and a create_poller method which allows creation of SCM pollers.
 
 from datetime import datetime
 import logging
-from multiprocessing import Queue
+from multiprocessing import Pipe, Queue
 import os
 import time
 import github_helper
@@ -44,6 +44,7 @@ class MergebotPoller(object):
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
+        self.merger_pipe, child_pipe = Pipe()
         l = logging.getLogger('{name}_logger'.format(name=config['name']))
         log_fmt = '[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] %(message)s'
         date_fmt = '%m/%d %H:%M:%S'
@@ -54,7 +55,7 @@ class MergebotPoller(object):
         l.addHandler(h)
         l.setLevel(logging.INFO)
         self.l = l
-        self.merger = merge.create_merger(config, self.work_queue)
+        self.merger = merge.create_merger(config, self.work_queue, child_pipe)
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -91,6 +92,8 @@ class GithubPoller(MergebotPoller):
             if self.comm_pipe.poll():
                 t = self.comm_pipe.recv()
                 if t == 'terminate':
+                    self.merger_pipe.send('terminate')
+                    self.merger.join()
                     return
             hb = datetime.now().strftime('%H:%M:%S-%Y-%m-%d')
             self.comm_pipe.send('hb: {hb}'.format(hb=hb))
@@ -148,11 +151,7 @@ class GithubPoller(MergebotPoller):
             log_error = 'Unauthorized user "{user}" attempted command "{com}".'
             pr_error = 'User {user} not a committer; access denied.'
             self.l.warning(log_error.format(user=user, com=cmt_body))
-            try:
-                pull.post_error(pr_error.format(user=user))
-            except EnvironmentError as err:
-                self.l.error('Error posting comment: {err}.'.format(err=err))
-                return False
+            pull.post_error(pr_error.format(user=user), self.l)
             return True
         cmd_str = cmt_body.split('@{} '.format(BOT_NAME), 1)[1]
         cmd = cmd_str.split(' ')[0]
@@ -160,11 +159,7 @@ class GithubPoller(MergebotPoller):
             self.l.warning('Command was {}, not a valid command.'.format(cmd))
             # Post back to PR
             error = 'Command was {}, not a valid command. Valid commands: {}.'
-            try:
-                pull.post_error(error.format(cmd, self.COMMANDS.keys()))
-            except EnvironmentError as err:
-                self.l.error('Error posting comment: {err}.'.format(err=err))
-                return False
+            pull.post_error(error.format(cmd, self.COMMANDS.keys()), self.l)
             return True
         return self.COMMANDS[cmd](pull)
 
@@ -181,5 +176,7 @@ class GithubPoller(MergebotPoller):
             contract with search_github_pr since other commands could fail.
         """
         self.l.info('Command was merge, adding to merge queue.')
+        pull.post_info('Adding PR to work queue; current position: '
+                       '{pos}.'.format(self.work_queue.qsize() + 1), self.l)
         self.work_queue.put(pull)
         return True

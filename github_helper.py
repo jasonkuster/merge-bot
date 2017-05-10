@@ -143,7 +143,7 @@ class GithubPR(object):
         Args:
             content: the content to post.
         """
-        self.post_pr_comment('Error: {}'.format(content, logger))
+        self.post_pr_comment('Error: {}'.format(content), logger)
 
     def post_info(self, content, logger):
         """Posts an info-level message as a comment to Github.
@@ -151,7 +151,7 @@ class GithubPR(object):
         Args:
             content: the content to post.
         """
-        self.post_pr_comment('Info: {}'.format(content, logger))
+        self.post_pr_comment('Info: {}'.format(content), logger)
 
     def post_pr_comment(self, content, logger):
         """Posts a PR comment to Github.
