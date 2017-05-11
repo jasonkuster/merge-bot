@@ -5,6 +5,8 @@ they work, and then submit.
 """
 import time
 
+from datetime import datetime
+
 import abc
 import logging
 import os
@@ -67,6 +69,37 @@ class Merger(Thread):
         self.pipe = pipe
         Thread.__init__(self)
 
+    def publish_message(self, msg_type, content):
+        """Publishes messages to the merger message bus.
+
+        Args:
+          msg_type: Type of message, should be a string.
+          content: Content of message.
+        """
+        now = datetime.now()
+        msg = {
+            'name': self.config['name'],
+            'module': 'merge',
+            'type': msg_type,
+            'timestamp': now,
+            'content': content,
+        }
+        self.pipe.send(msg)
+
+    def publish_work_item_status(self, item_id, status):
+        """Publishes a message about a work item to the message bus.
+
+        Args:
+          item_id: Unique identifier for this work item.
+          status: Work item status.
+        """
+        self.publish_message(
+            'WORK_ITEM_STATUS',
+            {
+                'id': item_id,
+                'status': status,
+            })
+
     @abc.abstractmethod
     def run(self):
         """run spins forever, merging things off of the work queue.
@@ -127,7 +160,9 @@ class GitMerger(Merger):
     FINAL_CMDS = [
         Command('git push {remote_name} HEAD:{branch}',
                 desc='Push to remote master.',
-                error='Remote push failed. Please try again.'),
+                error='Final push failed, but verification succeeded. This may '
+                      'have occurred because of a manual merge into the repo. '
+                      'Please check logs and try again.'),
     ]
 
     APACHE_GIT = 'https://git-wip-us.apache.org/repos/asf/{repo}.git'
@@ -160,6 +195,7 @@ class GitMerger(Merger):
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
+        self.publish_message('STATUS', 'STARTUP')
         terminate = False
         while True:
             pr = None
@@ -172,34 +208,47 @@ class GitMerger(Merger):
                 try:
                     if not terminate:
                         pr = self.work_queue.get(timeout=5)
+                        self.publish_message('DEQUEUE', pr.get_num())
                         break
                     while True:
                         pr = self.work_queue.get_nowait()
+                        self.publish_message('DEQUEUE', pr.get_num())
                         pr.post_info('MergeBot shutting down; please resubmit '
                                      'when MergeBot is back up.',
                                      self.merge_logger)
                 except Empty:
                     if terminate:
+                        self.publish_message('STATUS', 'SHUTDOWN')
                         return
-                except BaseException:
+                except BaseException as exc:
+                    self.merge_logger.error("Unhandled exception: {exc}".format(
+                        exc=exc))
                     if terminate:
+                        self.publish_message('STATUS', 'SHUTDOWN')
                         return
+
+            pr_num = pr.get_num()
+            self.merge_logger.info(
+                'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
+            self.merge_logger.info('{remaining} work items remaining.'.format(
+                remaining=self.work_queue.qsize()))
+            self.publish_work_item_status(pr_num, 'START')
             try:
-                pr_num = pr.get_num()
-                self.merge_logger.info(
-                    'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
-                self.merge_logger.info('{remaining} work items remaining.'.format(
-                    remaining=self.work_queue.qsize()))
                 pr.post_info(
-                    'MergeBot starting work on PR#{pr_num}.'.format(pr_num=pr_num),
+                    'MergeBot starting work on PR#{pr_num}.'.format(
+                        pr_num=pr_num),
                     self.merge_logger)
                 self.merge_git_pr(pr)
             except BaseException as exc:
                 pr.post_error('MergeBot encountered an unexpected error while '
                               'processing this PR: {exc}.'.format(exc=exc),
                               self.merge_logger)
+                self.publish_work_item_status(pr_num, 'ERROR: {exc}'.format(
+                    exc=exc))
                 self.merge_logger.error('Exception while merging PR: '
                                         '{exc}.'.format(exc=exc))
+            finally:
+                self.publish_work_item_status(pr_num, 'FINISH')
 
     def get_logger(self, pr_num):
         """get_logger returns a logger for a particular PR.
@@ -245,18 +294,21 @@ class GitMerger(Merger):
                 pr_num=pr_num))
             _set_up(tmp_dir)
             self.execute_merge_lifecycle(pr, tmp_dir, pr_logger)
-            pr_logger.info('Merge concluded satisfactorily. Moving on.')
-            self.merge_logger.info(
-                'PR#{num} processing done.'.format(num=pr_num))
         except AssertionError as exc:
             pr.post_error(exc, pr_logger)
+            self.publish_work_item_status(pr_num, 'ERROR: {exc}'.format(
+                exc=exc))
         except BaseException as exc:
             pr.post_error('MergeBot encountered an error: {exc}.'.format(
                 exc=exc), pr_logger)
+            self.publish_work_item_status(pr_num, 'ERROR: {exc}'.format(
+                exc=exc))
             pr_logger.error('Unhandled exception caught: {exc}.'.format(
                 exc=exc))
         finally:
             _clean_up(tmp_dir)
+            self.merge_logger.info(
+                'PR#{num} processing done.'.format(num=pr_num))
 
     def execute_merge_lifecycle(self, pr, tmp_dir, pr_logger):
         """execute_merge_lifecycle merges git pull requests.
@@ -268,26 +320,29 @@ class GitMerger(Merger):
         Raises:
             AssertionError if there was a problem with merging the PR.
         """
+        pr_num = pr.get_num()
         pr_vars = self.common_vars.copy()
         pr_vars.update({
-            'msg': 'This closes #{pr_num}'.format(pr_num=pr.get_num()),
-            'pr_name': 'finish-pr-{pr_num}'.format(pr_num=pr.get_num()),
-            'pr_num': pr.get_num(),
+            'msg': 'This closes #{pr_num}'.format(pr_num=pr_num),
+            'pr_name': 'finish-pr-{pr_num}'.format(pr_num=pr_num),
+            'pr_num': pr_num,
         })
 
         pr_logger.info('Beginning pre-verification phase.')
-        self.run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr, pr_logger)
+        self.publish_work_item_status(pr_num, "PREPARE")
+        run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
         pr_logger.info("Successfully finished pre-verification phase.")
 
         pr_logger.info("Starting verification phase.")
+        self.publish_work_item_status(pr_num, "VERIFY")
         jenkins = Jenkins(self.config['jenkins_location'])
         job = jenkins[self.config['verification_job_name']]
-        buildnum = job.get_next_build_number()
-        self.run_cmds(self.VERIFICATION_CMDS, pr_vars, tmp_dir, pr, pr_logger)
+        build_num = job.get_next_build_number()
+        run_cmds(self.VERIFICATION_CMDS, pr_vars, tmp_dir, pr_logger)
 
         # We've pushed to the verification branch; Jenkins should pick up the
         # job soon.
-        if not self.verify_pr_via_jenkins(job, buildnum, pr, pr_logger):
+        if not self.verify_pr_via_jenkins(job, build_num, pr, pr_logger):
             pr_logger.info('Job verification failed, moving on.')
             raise AssertionError(
                 'PR failed in verification; check the Jenkins job for more '
@@ -295,10 +350,11 @@ class GitMerger(Merger):
         pr_logger.info('Job verification succeeded.')
 
         pr_logger.info('Starting final push.')
-        self.run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr, pr_logger)
+        self.publish_work_item_status(pr_num, "MERGE")
+        run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr_logger)
         pr.post_info('PR merge succeeded!', pr_logger)
         pr_logger.info('Merge for {pr_num} completed successfully.'.format(
-            pr_num=pr.get_num()))
+            pr_num=pr_num))
 
     def verify_pr_via_jenkins(self, job, build_num, pr, pr_logger):
         """Checks against the configured Jenkins job for verification.
@@ -315,6 +371,7 @@ class GitMerger(Merger):
         """
         wait_secs = 0
         build = None
+        self.publish_work_item_status(pr.get_num(), "WAIT_ON_JOB_START")
         while wait_secs < self.JOB_START_TIMEOUT:
             try:
                 build = job.get_build(build_num)
@@ -341,11 +398,17 @@ class GitMerger(Merger):
         text = ('Job verification started. Verification job is '
                 '[here]({build_url}) (may still be pending; if page 404s, '
                 'check job status page [here]({job_url})).'.format(
-            build_url=build_url,
-            job_url=job_url))
+                    build_url=build_url,
+                    job_url=job_url))
         pr.post_info(text, pr_logger)
+        self.publish_work_item_status(pr.get_num(),
+                                      'JOB_FOUND: {build_url}'.format(
+                                          build_url=build_url))
+        self.publish_work_item_status(pr.get_num(), "JOB_WAIT")
 
-        build.block_until_complete()
+        while build.is_running():
+            self.publish_work_item_status(pr.get_num(), "JOB_WAIT_HEARTBEAT")
+            time.sleep(10)
 
         # For some reason, the build does not have a status upon completion and
         # we have to fetch it again. A fairly extensive live debug failed to
@@ -355,41 +418,41 @@ class GitMerger(Merger):
             return True
         return False
 
-    def run_cmds(self, cmds, fmt_dict, tmp_dir, pr, pr_logger):
-        """Runs a set of commands.
 
-        Args:
-            cmds: Iterable of Commands to run.
-            fmt_dict: Dictionary of parameters with which to format the
-                command and other strings.
-            tmp_dir: Directory in which to run commands.
-            pr: Pull request being merged.
-            pr_logger: pr logger.
-        Raises:
-            AssertionError: If command was not successful.
-        """
-        for cmd in cmds:
-            cmd_full = cmd.command.format(**fmt_dict)
-            cmd_formatted = cmd_full if cmd.shell else shlex.split(cmd_full)
-            pr_logger.info('Starting: {cmd_desc}.'.format(
-                cmd_desc=cmd.desc.format(**fmt_dict)))
-            pr_logger.info('Running command: {cmd}.'.format(cmd=cmd_formatted))
-            try:
-                out = check_output(cmd_formatted, cwd=tmp_dir,
-                                   shell=cmd.shell, stderr=STDOUT)
-                for line in out.split('\n'):
-                    pr_logger.info(line)
-            except CalledProcessError as exc:
-                pr_logger.error(
-                    'Command "{cmd}" failed: {err}.'.format(
+def run_cmds(cmds, fmt_dict, tmp_dir, logger):
+    """Runs a set of commands.
+
+    Args:
+        cmds: Iterable of Commands to run.
+        fmt_dict: Dictionary of parameters with which to format the
+            command and other strings.
+        tmp_dir: Directory in which to run commands.
+        logger: pr logger.
+    Raises:
+        AssertionError: If command was not successful.
+    """
+    for cmd in cmds:
+        cmd_full = cmd.command.format(**fmt_dict)
+        cmd_formatted = cmd_full if cmd.shell else shlex.split(cmd_full)
+        logger.info('Starting: {cmd_desc}.'.format(
+            cmd_desc=cmd.desc.format(**fmt_dict)))
+        logger.info('Running command: {cmd}.'.format(cmd=cmd_formatted))
+        try:
+            out = check_output(cmd_formatted, cwd=tmp_dir,
+                               shell=cmd.shell, stderr=STDOUT)
+            for line in out.split('\n'):
+                logger.info(line)
+        except CalledProcessError as exc:
+            logger.error(
+                'Command "{cmd}" failed: {err}.'.format(
                     cmd=cmd_formatted,
                     err=exc))
-                for line in exc.output.split('\n'):
-                    pr_logger.error(line)
-                raise AssertionError(cmd.error.format(**fmt_dict))
+            for line in exc.output.split('\n'):
+                logger.error(line)
+            raise AssertionError(cmd.error.format(**fmt_dict))
 
-            pr_logger.info('Finished: {cmd_desc}.'.format(
-                cmd_desc=cmd.desc.format(**fmt_dict)))
+        logger.info('Finished: {cmd_desc}.'.format(
+            cmd_desc=cmd.desc.format(**fmt_dict)))
 
 
 def _set_up(tmp_dir):

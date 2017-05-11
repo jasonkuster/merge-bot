@@ -40,22 +40,43 @@ class MergebotPoller(object):
     def __init__(self, config, comm_pipe):
         self.config = config
         self.comm_pipe = comm_pipe
-        # TODO(jasonkuster): Hand the queue off to the heartbeat publisher.
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
         self.merger_pipe, child_pipe = Pipe()
-        l = logging.getLogger('{name}_logger'.format(name=config['name']))
-        log_fmt = '[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] %(message)s'
+        self.l = self.get_logger()
+        self.merger = merge.create_merger(config, self.work_queue, child_pipe)
+
+    def get_logger(self):
+        l = logging.getLogger('{name}_logger'.format(name=self.config['name']))
+        log_fmt = ('[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] '
+                   '%(message)s')
         date_fmt = '%m/%d %H:%M:%S'
         f = logging.Formatter(log_fmt, date_fmt)
         h = logging.FileHandler(
-            os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
+            os.path.join('log',
+                         '{name}_log.txt'.format(name=self.config['name'])))
         h.setFormatter(f)
         l.addHandler(h)
         l.setLevel(logging.INFO)
-        self.l = l
-        self.merger = merge.create_merger(config, self.work_queue, child_pipe)
+        return l
+
+    def publish_message(self, msg_type, content):
+        """Publishes messages to the merger message bus.
+
+        Args:
+          msg_type: Type of message, should be a string.
+          content: Content of message.
+        """
+        now = datetime.now()
+        msg = {
+            'name': self.config['name'],
+            'module': 'mergebot_poller',
+            'type': msg_type,
+            'timestamp': now,
+            'content': content,
+        }
+        self.comm_pipe.send(msg)
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -81,6 +102,7 @@ class GithubPoller(MergebotPoller):
         """Kicks off polling of Github.
         """
         self.l.info('Starting poller for {}.'.format(self.config['name']))
+        self.publish_message('STATUS', 'STARTUP')
         self.poll_github()
 
     def poll_github(self):
@@ -93,10 +115,11 @@ class GithubPoller(MergebotPoller):
                 t = self.comm_pipe.recv()
                 if t == 'terminate':
                     self.merger_pipe.send('terminate')
+                    self.publish_message('STATUS', 'TERMINATING')
                     self.merger.join()
+                    self.publish_message('STATUS', 'SHUTDOWN')
                     return
-            hb = datetime.now().strftime('%H:%M:%S-%Y-%m-%d')
-            self.comm_pipe.send('hb: {hb}'.format(hb=hb))
+            self.publish_message('HEARTBEAT', '')
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
@@ -177,6 +200,7 @@ class GithubPoller(MergebotPoller):
         """
         self.l.info('Command was merge, adding to merge queue.')
         pull.post_info('Adding PR to work queue; current position: '
-                       '{pos}.'.format(self.work_queue.qsize() + 1), self.l)
+                       '{pos}.'.format(pos=self.work_queue.qsize() + 1), self.l)
+        self.publish_message('ENQUEUE', str(pull.get_num()))
         self.work_queue.put(pull)
         return True
