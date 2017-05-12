@@ -1,11 +1,10 @@
 import time
 
 import mergebot
-from multiprocessing import Pipe
+from multiprocessing import Process, Pipe
 from threading import Thread
 from flask import Flask, abort, render_template, send_from_directory, request
 from flask_sqlalchemy import SQLAlchemy
-import thread
 import signal
 
 app = Flask(__name__)
@@ -230,15 +229,8 @@ def start_server():
     app.run()
 
 
-def stop_server():
-    func = request.environ.get('werkzeug.server.shutdown')
-    if not func:
-        raise RuntimeError('Not running with werkzeug server.')
-    func()
-
-
 def shutdown_mergebot(signum, frame):
-    print 'Caught {signal}.'.format(signum)
+    print 'Caught {signal}.'.format(signal=signum)
     raise ServerExit
 
 
@@ -250,16 +242,16 @@ def main():
     Poller.query.delete()
     QueuedItem.query.delete()
     db.session.commit()
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     parent_pipe, child_pipe = Pipe()
     mb = mergebot.MergeBot(child_pipe)
     pub = DatabasePublisher(parent_pipe)
-    signal.signal(signal.SIGTERM, shutdown_mergebot)
-    signal.signal(signal.SIGINT, shutdown_mergebot)
+    server = Process(target=start_server)
     try:
         mb.start()
         pub.start()
-        # TODO(jasonkuster): standardize?
-        thread.start_new_thread(start_server, ())
+        server.start()
+        signal.signal(signal.SIGINT, shutdown_mergebot)
         while True:
             time.sleep(0.5)
     except ServerExit:
@@ -269,7 +261,8 @@ def main():
         child_pipe.send('terminate')
         pub.join()
         print "MergeBot terminated; killing server."
-        stop_server()
+        server.terminate()
+        server.join()
     print "Server terminated; ending."
 
 
