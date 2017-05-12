@@ -71,7 +71,7 @@ class MergeBot(Thread):
 
         while True:
             if self.message_pipe.poll():
-                msg = self.message.recv()
+                msg = self.message_pipe.recv()
                 if msg == 'terminate':
                     break
             for merger in mergers:
@@ -79,6 +79,7 @@ class MergeBot(Thread):
                     self.message_pipe.send(merger.pipe.recv())
             sleep(1)
 
+        self.l.info('Caught terminate signal; killing children and exiting.')
         for merger in mergers:
             merger.pipe.send('terminate')
         for merger in mergers:
