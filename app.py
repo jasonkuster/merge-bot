@@ -33,7 +33,8 @@ def project(proj):
         project_name=proj,
         status='FINISH',
     ).order_by(WorkItemStatus.timestamp.desc()).first()
-    if last_start.timestamp > last_finish.timestamp:
+    if last_start and (not last_finish or (last_start.timestamp >
+                                           last_finish.timestamp)):
         active = WorkItemStatus.query.filter_by(
             project_name=proj,
             item_id=last_start.item_id,
@@ -116,7 +117,7 @@ class Poller(db.Model):
 
 class QueuedItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    project_name = db.Column(db.String(80), unique=True)
+    project_name = db.Column(db.String(80))
     item_id = db.Column(db.Integer)
     timestamp = db.Column(db.DateTime)
 
@@ -224,6 +225,9 @@ def insert_work_item(msg):
 
 
 if __name__ == "__main__":
+    Poller.query.delete()
+    QueuedItem.query.delete()
+    db.session.commit()
     parent_pipe, child_pipe = Pipe()
     mb = mergebot.MergeBot(child_pipe)
     pub = DatabasePublisher(parent_pipe)
@@ -235,6 +239,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print "Caught KeyboardInterrupt, waiting for MergeBot termination."
         # Does this kill the mergebot in the subthread?
+        parent_pipe.send('terminate')
         mb.join()
         child_pipe.send('terminate')
         pub.join()

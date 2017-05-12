@@ -69,10 +69,15 @@ class MergeBot(Thread):
         configs = self.parse_configs()
         mergers = self.start_mergers(configs)
 
-        try:
-            self.pass_messages(mergers)
-        except KeyboardInterrupt:
-            self.l.info('Caught KeyboardInterrupt; killing children and ending.')
+        while True:
+            if self.message_pipe.poll():
+                msg = self.message.recv()
+                if msg == 'terminate':
+                    break
+            for merger in mergers:
+                while merger.pipe.poll():
+                    self.message_pipe.send(merger.pipe.recv())
+            sleep(1)
 
         for merger in mergers:
             merger.pipe.send('terminate')
@@ -98,10 +103,6 @@ class MergeBot(Thread):
 
     def start_mergers(self, configs):
         mergers = []
-        # Workaround for multiprocessing SIGINT problems per
-        # http://stackoverflow.com/questions/11312525 and the like. Children need to
-        # ignore SIGINT; parent should obey and clean up itself.
-        original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
         for config in configs:
             parent_pipe, child_pipe = Pipe()
             p = Process(target=poll_scm, args=(config, child_pipe,))
@@ -111,16 +112,7 @@ class MergeBot(Thread):
                 last_heartbeat=datetime.now()))
             self.l.info('Starting poller for {}.'.format(config['name']))
             p.start()
-        signal.signal(signal.SIGINT, original_sigint_handler)
         return mergers
-
-    def pass_messages(self, mergers):
-        while True:
-            for merger in mergers:
-                while merger.pipe.poll():
-                    self.message_pipe.send(merger.pipe.recv())
-            sleep(1)
-
 
 if __name__ == '__main__':
     main()

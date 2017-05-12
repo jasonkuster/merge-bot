@@ -119,6 +119,8 @@ class GithubPoller(MergebotPoller):
                     self.merger.join()
                     self.publish_message('STATUS', 'SHUTDOWN')
                     return
+            while self.merger_pipe.poll():
+                self.comm_pipe.send(self.merger_pipe.recv())
             self.publish_message('HEARTBEAT', '')
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
