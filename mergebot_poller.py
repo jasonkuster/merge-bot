@@ -23,6 +23,7 @@ def create_poller(config, comm_pipe):
 
     Args:
         config: A dictionary containing repository configuration.
+        comm_pipe: multiprocessing Pipe with which to communicate with parent.
     Returns:
         MergebotPoller of type specified in configuration
     Raises:
@@ -114,9 +115,15 @@ class GithubPoller(MergebotPoller):
             if self.comm_pipe.poll():
                 t = self.comm_pipe.recv()
                 if t == 'terminate':
+                    self.l.info(
+                        'Caught termination signal in {name}. Killing merger '
+                        'and exiting.'.format(name=self.config['name']))
                     self.merger_pipe.send('terminate')
                     self.publish_message('STATUS', 'TERMINATING')
                     self.merger.join()
+                    self.l.info(
+                        '{name} merger killed, poller shutting down.'.format(
+                            name=self.config['name']))
                     self.publish_message('STATUS', 'SHUTDOWN')
                     return
             while self.merger_pipe.poll():
