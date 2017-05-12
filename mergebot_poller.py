@@ -7,14 +7,14 @@ inherit and a create_poller method which allows creation of SCM pollers.
 
 from datetime import datetime
 import logging
+import json
 from multiprocessing import Pipe, Queue
 import os
 import time
 import github_helper
 import merge
+import requests
 
-# TODO(jasonkuster): Fetch authorized users from somewhere official.
-AUTHORIZED_USERS = ['davorbonaci', 'jasonkuster']
 BOT_NAME = 'apache-merge-bot'
 
 
@@ -47,6 +47,17 @@ class MergebotPoller(object):
         self.merger_pipe, child_pipe = Pipe()
         self.l = self.get_logger()
         self.merger = merge.create_merger(config, self.work_queue, child_pipe)
+        # TODO(jasonkuster): Apache usernames do not correspond 1:1 to github
+        # usernames. Is there somewhere I can fetch a map from?
+        groups_json = requests.get(
+            'https://people.apache.org/public/public_ldap_groups.json')
+        groups_json.raise_for_status()
+        groups = json.loads(groups_json.content)
+        self.authorized_users = groups['groups'][config['name']]['roster']
+        # Infra should have access in case they need to help fix things.
+        self.authorized_users.extend(groups['groups']['infra']['roster'])
+        # For testing; remove in final version.
+        self.authorized_users.append(u'jasonkuster')
 
     def get_logger(self):
         l = logging.getLogger('{name}_logger'.format(name=self.config['name']))
@@ -179,7 +190,7 @@ class GithubPoller(MergebotPoller):
             return True
         # Check auth.
         user = cmt.get_user()
-        if user not in AUTHORIZED_USERS:
+        if user not in self.authorized_users:
             log_error = 'Unauthorized user "{user}" attempted command "{com}".'
             pr_error = 'User {user} not a committer; access denied.'
             self.l.warning(log_error.format(user=user, com=cmt_body))

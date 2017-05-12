@@ -226,7 +226,7 @@ def insert_work_item(msg):
 
 
 def start_server():
-    app.run()
+    app.run(host='0.0.0.0', port='8080')
 
 
 def shutdown_mergebot(signum, frame):
