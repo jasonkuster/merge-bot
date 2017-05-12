@@ -3,8 +3,10 @@ import time
 import mergebot
 from multiprocessing import Pipe
 from threading import Thread
-from flask import Flask, abort, render_template, send_from_directory
+from flask import Flask, abort, render_template, send_from_directory, request
 from flask_sqlalchemy import SQLAlchemy
+import thread
+import signal
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///db/mergebot.db'
@@ -224,24 +226,52 @@ def insert_work_item(msg):
     db.session.commit()
 
 
-if __name__ == "__main__":
+def start_server():
+    app.run()
+
+
+def stop_server():
+    func = request.environ.get('werkzeug.server.shutdown')
+    if not func:
+        raise RuntimeError('Not running with werkzeug server.')
+    func()
+
+
+def shutdown_mergebot(signum, frame):
+    print 'Caught {signal}.'.format(signum)
+    raise ServerExit
+
+
+class ServerExit(Exception):
+    pass
+
+
+def main():
     Poller.query.delete()
     QueuedItem.query.delete()
     db.session.commit()
     parent_pipe, child_pipe = Pipe()
     mb = mergebot.MergeBot(child_pipe)
     pub = DatabasePublisher(parent_pipe)
+    signal.signal(signal.SIGTERM, shutdown_mergebot)
+    signal.signal(signal.SIGINT, shutdown_mergebot)
     try:
         mb.start()
         pub.start()
-        # How do we keep the app running through the keyboardinterrupt?
-        app.run()
-    except KeyboardInterrupt:
-        print "Caught KeyboardInterrupt, waiting for MergeBot termination."
-        # Does this kill the mergebot in the subthread?
+        # TODO(jasonkuster): standardize?
+        thread.start_new_thread(start_server, ())
+        while True:
+            time.sleep(0.5)
+    except ServerExit:
+        print "Exiting; waiting for MergeBot termination."
         parent_pipe.send('terminate')
         mb.join()
         child_pipe.send('terminate')
         pub.join()
-        print "MergeBot terminated; ending."
-        raise
+        print "MergeBot terminated; killing server."
+        stop_server()
+    print "Server terminated; ending."
+
+
+if __name__ == "__main__":
+    main()
