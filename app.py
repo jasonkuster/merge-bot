@@ -1,11 +1,5 @@
-import time
-
-import mergebot
-from multiprocessing import Process, Pipe
-from threading import Thread
-from flask import Flask, abort, render_template, send_from_directory, request
+from flask import Flask, abort, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-import signal
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///db/mergebot.db'
