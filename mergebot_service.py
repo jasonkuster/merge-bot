@@ -11,15 +11,14 @@ class DatabasePublisher(Thread):
         self.pipe = pipe
         Thread.__init__(self)
 
-
-def run(self):
-    while True:
-        while self.pipe.poll():
-            msg = self.pipe.recv()
-            if msg == 'terminate':
-                return
-            handle_message(msg)
-        time.sleep(1)
+    def run(self):
+        while True:
+            while self.pipe.poll():
+                msg = self.pipe.recv()
+                if msg == 'terminate':
+                    return
+                handle_message(msg)
+            time.sleep(1)
 
 
 def handle_message(msg):
