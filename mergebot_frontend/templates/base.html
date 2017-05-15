@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>MergeBot</title>
+    <title>{% block title %}{% endblock %}<</title>
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css"
@@ -10,7 +10,7 @@
     <!-- Optional Bootstrap theme -->
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css"
           integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous">
-    <link rel="stylesheet" href="css/mergebot.css">
+    <link rel="stylesheet" href="/static/css/mergebot.css">
 </head>
 <body>
 <nav class="navbar navbar-default navbar-fixed-top">
@@ -20,26 +20,7 @@
         </div>
     </div>
 </nav>
-<div class="container">
-    <div class="row">
-        {% for poller in pollers %}
-        <div class="col-lg-4 col-md-6 col-xs-12 projitem">
-            <div class="panel panel-default">
-                <div class="panel-heading">
-                    <h3 class="panel-title pull-left">{{ poller.project_name }}</h3>
-                    <a class="panel-title pull-right" href="/{{ poller.project_name }}">Link</a>
-                    <div class="clearfix"></div>
-                </div>
-                <div class="panel-body">
-                    <p>Status: {{ poller.status }}</p>
-                    <p>Last Updated: {{ poller.timestamp }}</p>
-                    <p>Merger Started: {{ poller.merger_started }}</p>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-</div>
+{% block content %}{% endblock %}
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
 <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"
         integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa"
