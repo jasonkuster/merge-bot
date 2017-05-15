@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Apache Mergebot{% endblock %}
+{% block content %}
+<div class="container">
+    <div class="row">
+        {% for poller in pollers %}
+        <div class="col-lg-4 col-md-6 col-xs-12 projitem">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h3 class="panel-title pull-left">{{ poller.project_name }}</h3>
+                    <a class="panel-title pull-right" href="/{{ poller.project_name }}">Link</a>
+                    <div class="clearfix"></div>
+                </div>
+                <div class="panel-body">
+                    <p>Status: {{ poller.status }}</p>
+                    <p>Last Updated: {{ poller.timestamp }}</p>
+                    <p>Merger Started: {{ poller.merger_started }}</p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
