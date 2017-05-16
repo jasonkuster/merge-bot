@@ -1,7 +1,9 @@
 import unittest
-import github_helper
-from mock import mock_open, patch, PropertyMock
+
 import requests
+from mock import mock_open, patch, PropertyMock
+
+from mergebot_backend import github_helper
 
 
 class TestGithubHelper(unittest.TestCase):
