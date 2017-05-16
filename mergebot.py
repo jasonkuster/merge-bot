@@ -2,16 +2,96 @@
 """Mergebot is a program which merges approved SCM changes into a master repo.
 """
 
-from datetime import datetime
 import glob
-import logging
 from multiprocessing import Pipe, Process
-import signal
-from threading import Thread
 from time import sleep
 
-import mergebot_poller
+import signal
 import yaml
+
+from mergebot_backend import mergebot_poller
+from mergebot_backend.log_helper import get_logger
+from mergebot_frontend import db
+from mergebot_frontend.models import Poller, QueuedItem
+
+l = get_logger('mergebot')
+
+
+def shutdown_mergebot(signum, _):
+    """shutdown_mergebot is the signal handler used to send the kill signal."""
+    print 'Caught {signal}.'.format(signal=signum)
+    raise ServerExit
+
+
+class ServerExit(Exception):
+    """ServerExit is a more specific exception for when we terminate."""
+    pass
+
+
+def main():
+    """Reads configs and kicks off pollers.
+
+    main reads the configs and then kicks off pollers per config file 
+    successfully read in. It then waits for the signal to shut down itself 
+    and its children.
+    """
+    l.info('Mergebot Manager Starting Up')
+    l.info('Cleaning Up Old Tables')
+    Poller.query.delete()
+    QueuedItem.query.delete()
+    db.session.commit()
+
+    configs = parse_configs()
+
+    # Set signals to ignore while we set up the mergers, then set appropriately.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    pollers = start_pollers(configs)
+    signal.signal(signal.SIGINT, shutdown_mergebot)
+    signal.signal(signal.SIGTERM, shutdown_mergebot)
+
+    try:
+        while True:
+            sleep(1)
+    except ServerExit:
+        l.info('Caught terminate signal; killing children and exiting.')
+
+    for poller in pollers:
+        poller.pipe.send('terminate')
+    for poller in pollers:
+        poller.process.join()
+
+    l.info('Children killed, terminating.')
+
+
+def parse_configs():
+    """Parses config files out of config/ directory.
+    
+    Returns:
+        Array of merger configurations.
+    """
+    # TODO(jasonkuster): Load configurations into class to enable validation?
+    configs = []
+    l.info('Parsing Config Files')
+    for filename in glob.iglob('config/*.yaml'):
+        with open(filename) as cfg:
+            try:
+                l.info('Opening {}'.format(filename))
+                config = yaml.load(cfg)
+                l.info('{} Successfully Read'.format(filename))
+                configs.append(config)
+            except yaml.YAMLError as exc:
+                l.fatal(
+                    'Error parsing file {filename}: {exc}. Please fix and try '
+                    'again.'.format(filename=filename, exc=exc))
+    return configs
+
+
+class PollerInfo(object):
+    """MergerInfo contains important hooks for the pollers we are running."""
+    def __init__(self, process, pipe):
+        self.process = process
+        self.pipe = pipe
 
 
 def poll_scm(config, pipe):
@@ -25,95 +105,25 @@ def poll_scm(config, pipe):
     poller.poll()
 
 
-class MergerInfo(object):
-    def __init__(self, process, pipe, last_heartbeat):
-        self.process = process
-        self.pipe = pipe
-        self.last_heartbeat = last_heartbeat
+def start_pollers(configs):
+    """start_pollers starts a set of pollers for specified configurations.
+    
+    Args:
+        configs: Configurations for the pollers.
 
-
-def main():
-    _, child_pipe = Pipe()
-    mb = MergeBot(child_pipe)
-    mb.start()
-    mb.join()
-
-
-def get_logger():
-    l = logging.getLogger('mergebot')
-    log_fmt = '[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] %(message)s'
-    date_fmt = '%m/%d %H:%M:%S'
-    f = logging.Formatter(log_fmt, date_fmt)
-    h = logging.StreamHandler()
-    h.setFormatter(f)
-    l.setLevel(logging.INFO)
-    l.addHandler(h)
-    return l
-
-
-class MergeBot(Thread):
-
-    def __init__(self, message_pipe):
-        self.message_pipe = message_pipe
-        self.l = get_logger()
-        self.l.info('Mergebot Manager Starting Up')
-        Thread.__init__(self)
-
-    def run(self):
-        """Reads configs and kicks off pollers.
-
-        start_pollers reads the configs and then kicks off pollers per config file
-        successfully read in. It then waits for a keyboard interrupt as the signal
-        to shut down itself and its children.
-        """
-        configs = self.parse_configs()
-        mergers = self.start_mergers(configs)
-
-        while True:
-            if self.message_pipe.poll():
-                msg = self.message_pipe.recv()
-                if msg == 'terminate':
-                    break
-            for merger in mergers:
-                while merger.pipe.poll():
-                    self.message_pipe.send(merger.pipe.recv())
-            sleep(1)
-
-        self.l.info('Caught terminate signal; killing children and exiting.')
-        for merger in mergers:
-            merger.pipe.send('terminate')
-        for merger in mergers:
-            merger.process.join()
-        self.l.info('Children killed, done.')
-
-    def parse_configs(self):
-        configs = []
-        self.l.info('Parsing Config Files')
-        for filename in glob.iglob('config/*.yaml'):
-            with open(filename) as cfg:
-                try:
-                    self.l.info('Opening {}'.format(filename))
-                    config = yaml.load(cfg)
-                    self.l.info('{} Successfully Read'.format(filename))
-                    configs.append(config)
-                except yaml.YAMLError as exc:
-                    self.l.fatal(
-                        'Error parsing file {filename}: {exc}. Please fix and try '
-                        'again.'.format(filename=filename, exc=exc))
-        return configs
-
-    def start_mergers(self, configs):
-        mergers = []
-        for config in configs:
-            parent_pipe, child_pipe = Pipe()
-            p = Process(target=poll_scm, args=(config, child_pipe,))
-            mergers.append(MergerInfo(
-                process=p,
-                pipe=parent_pipe,
-                last_heartbeat=datetime.now()))
-            self.l.info('Starting poller for {}.'.format(config['name']))
-            p.start()
-        return mergers
+    Returns:
+        Array of poller info (process, comm pipe).
+    """
+    pollers = []
+    for config in configs:
+        parent_pipe, child_pipe = Pipe()
+        p = Process(target=poll_scm, args=(config, child_pipe,))
+        pollers.append(PollerInfo(
+            process=p,
+            pipe=parent_pipe))
+        l.info('Starting poller for {}.'.format(config['name']))
+        p.start()
+    return pollers
 
 if __name__ == '__main__':
     main()

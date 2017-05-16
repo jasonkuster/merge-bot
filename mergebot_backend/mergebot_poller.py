@@ -5,15 +5,14 @@ inherit and a create_poller method which allows creation of SCM pollers.
 """
 
 
-from datetime import datetime
-import logging
 import json
-from multiprocessing import Pipe, Queue
-import os
 import time
-import github_helper
-import merge
+from multiprocessing import Pipe, Queue
+
 import requests
+
+from mergebot_backend import database_publisher, github_helper, merge
+from mergebot_backend.log_helper import get_logger
 
 BOT_NAME = 'apache-merge-bot'
 
@@ -41,54 +40,32 @@ class MergebotPoller(object):
     def __init__(self, config, comm_pipe):
         self.config = config
         self.comm_pipe = comm_pipe
+        self.l = get_logger(name=self.config['name'], redirect_to_file=True)
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
+        # Pipe used to communicate with its merger.
         self.merger_pipe, child_pipe = Pipe()
-        self.l = self.get_logger()
         self.merger = merge.create_merger(config, self.work_queue, child_pipe)
-        # TODO(jasonkuster): Apache usernames do not correspond 1:1 to github
-        # usernames. Is there somewhere I can fetch a map from?
+        self.authorized_users = self.get_authorized_users()
+
+    def get_authorized_users(self):
+        """Fetches the list of users allowed to command this poller.
+        
+        Returns:
+            List of GitHub usernames of committers for this project.
+        """
+        # TODO(jasonkuster): Fetch canonical usernames from Gitbox.
         groups_json = requests.get(
             'https://people.apache.org/public/public_ldap_groups.json')
         groups_json.raise_for_status()
         groups = json.loads(groups_json.content)
-        self.authorized_users = groups['groups'][config['name']]['roster']
+        authorized_users = groups['groups'][self.config['name']]['roster']
         # Infra should have access in case they need to help fix things.
-        self.authorized_users.extend(groups['groups']['infra']['roster'])
+        authorized_users.extend(groups['groups']['infra']['roster'])
         # For testing; remove in final version.
-        self.authorized_users.append(u'jasonkuster')
-
-    def get_logger(self):
-        l = logging.getLogger('{name}_logger'.format(name=self.config['name']))
-        log_fmt = ('[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] '
-                   '%(message)s')
-        date_fmt = '%m/%d %H:%M:%S'
-        f = logging.Formatter(log_fmt, date_fmt)
-        h = logging.FileHandler(
-            os.path.join('log',
-                         '{name}_log.txt'.format(name=self.config['name'])))
-        h.setFormatter(f)
-        l.addHandler(h)
-        l.setLevel(logging.INFO)
-        return l
-
-    def publish_message(self, msg_type, content):
-        """Publishes messages to the merger message bus.
-
-        Args:
-          msg_type: Type of message, should be a string.
-          content: Content of message.
-        """
-        now = datetime.now()
-        msg = {
-            'name': self.config['name'],
-            'module': 'mergebot_poller',
-            'type': msg_type,
-            'timestamp': now,
-            'content': content,
-        }
-        self.comm_pipe.send(msg)
+        authorized_users.append(u'jasonkuster')
+        return authorized_users
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -114,7 +91,7 @@ class GithubPoller(MergebotPoller):
         """Kicks off polling of Github.
         """
         self.l.info('Starting poller for {}.'.format(self.config['name']))
-        self.publish_message('STATUS', 'STARTUP')
+        database_publisher.publish_poller_status(self.config['name'], 'STARTED')
         self.poll_github()
 
     def poll_github(self):
@@ -130,16 +107,18 @@ class GithubPoller(MergebotPoller):
                         'Caught termination signal in {name}. Killing merger '
                         'and exiting.'.format(name=self.config['name']))
                     self.merger_pipe.send('terminate')
-                    self.publish_message('STATUS', 'TERMINATING')
+                    database_publisher.publish_poller_status(
+                        self.config['name'],
+                        'TERMINATING')
                     self.merger.join()
                     self.l.info(
                         '{name} merger killed, poller shutting down.'.format(
                             name=self.config['name']))
-                    self.publish_message('STATUS', 'SHUTDOWN')
+                    database_publisher.publish_poller_status(
+                        self.config['name'],
+                        'SHUTDOWN')
                     return
-            while self.merger_pipe.poll():
-                self.comm_pipe.send(self.merger_pipe.recv())
-            self.publish_message('HEARTBEAT', '')
+            database_publisher.publish_poller_heartbeat(self.config['name'])
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
@@ -221,6 +200,6 @@ class GithubPoller(MergebotPoller):
         self.l.info('Command was merge, adding to merge queue.')
         pull.post_info('Adding PR to work queue; current position: '
                        '{pos}.'.format(pos=self.work_queue.qsize() + 1), self.l)
-        self.publish_message('ENQUEUE', str(pull.get_num()))
+        database_publisher.publish_enqueue(self.config['name'], pull.get_num())
         self.work_queue.put(pull)
         return True

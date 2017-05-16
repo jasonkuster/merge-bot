@@ -40,7 +40,6 @@ class GithubHelper(object):
             return [], 'Request timed out: {}'.format(exc)
         except RequestException as exc:
             return [], 'Catastrophic error in requests: {}'.format(exc)
-        return [], 'Unreachable Error'
 
     def get(self, endpoint):
         """get makes a GET request against a specified endpoint.
@@ -142,6 +141,7 @@ class GithubPR(object):
 
         Args:
             content: the content to post.
+            logger: logger to send error to if post fails.
         """
         self.post_pr_comment('Error: {}'.format(content), logger)
 
@@ -150,6 +150,7 @@ class GithubPR(object):
 
         Args:
             content: the content to post.
+            logger: logger to send error to if post fails.
         """
         self.post_pr_comment('Info: {}'.format(content), logger)
 
@@ -158,6 +159,7 @@ class GithubPR(object):
 
         Args:
             content: the content to post.
+            logger: logger to send error to if post fails.
         """
         err = self.helper.post(content, self.comments_url)
         if err is not None:

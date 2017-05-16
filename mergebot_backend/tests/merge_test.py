@@ -1,8 +1,9 @@
 import unittest
-import github_helper
-import merge
-from mock import patch
 from multiprocessing import Queue
+
+from mock import patch
+
+from mergebot_backend import merge
 
 
 class MergeTest(unittest.TestCase):

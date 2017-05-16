@@ -1,6 +1,8 @@
 import unittest
-import mergebot_poller
+
 from mock import patch
+
+from mergebot_backend import mergebot_poller
 
 
 class GithubPollerTest(unittest.TestCase):

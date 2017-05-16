@@ -4,11 +4,14 @@ click==6.7
 Flask==0.12.1
 Flask-Mail==0.9.1
 Flask-SQLAlchemy==2.2
+funcsigs==1.0.2
 itsdangerous==0.24
 jenkinsapi==0.3.4
 Jinja2==2.9.6
 MarkupSafe==1.0
+mock==2.0.0
 packaging==16.8
+pbr==3.0.0
 pyparsing==2.2.0
 python-dateutil==2.6.0
 pytz==2017.2
