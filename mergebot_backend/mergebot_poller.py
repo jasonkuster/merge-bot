@@ -164,7 +164,7 @@ class GithubPoller(MergebotPoller):
             log_error = 'Unauthorized user "{user}" attempted command "{com}".'
             pr_error = 'User {user} not a committer; access denied.'
             self.l.warning(log_error.format(user=user, com=cmt_body))
-            pull.post_error(pr_error.format(user=user), self.l)
+            pull.post_error(content=pr_error.format(user=user), logger=self.l)
             return True
         cmd_str = cmt_body.split('@{} '.format(BOT_NAME), 1)[1]
         cmd = cmd_str.split(' ')[0]
@@ -172,7 +172,8 @@ class GithubPoller(MergebotPoller):
             self.l.warning('Command was {}, not a valid command.'.format(cmd))
             # Post back to PR
             error = 'Command was {}, not a valid command. Valid commands: {}.'
-            pull.post_error(error.format(cmd, self.COMMANDS.keys()), self.l)
+            pull.post_error(content=error.format(cmd, self.COMMANDS.keys()),
+                            logger=self.l)
             return True
         return self.COMMANDS[cmd](pull)
 
