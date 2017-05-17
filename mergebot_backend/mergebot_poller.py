@@ -11,7 +11,7 @@ from multiprocessing import Pipe, Queue
 
 import requests
 
-from mergebot_backend import database_publisher, github_helper, merge
+from mergebot_backend import db_publisher, github_helper, merge
 from mergebot_backend.log_helper import get_logger
 
 BOT_NAME = 'apache-merge-bot'
@@ -28,9 +28,9 @@ def create_poller(config, comm_pipe):
     Raises:
         AttributeError: if passed an unsupported SCM type.
     """
-    if config['scm_type'] == 'github':
+    if config.scm_type == 'github':
         return GithubPoller(config, comm_pipe)
-    raise AttributeError('Unsupported SCM Type: {}.'.format(config['scm_type']))
+    raise AttributeError('Unsupported SCM Type: {}.'.format(config.scm_type))
 
 
 class MergebotPoller(object):
@@ -40,7 +40,7 @@ class MergebotPoller(object):
     def __init__(self, config, comm_pipe):
         self.config = config
         self.comm_pipe = comm_pipe
-        self.l = get_logger(name=self.config['name'], redirect_to_file=True)
+        self.l = get_logger(name=self.config.name, redirect_to_file=True)
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
@@ -60,7 +60,7 @@ class MergebotPoller(object):
             'https://people.apache.org/public/public_ldap_groups.json')
         groups_json.raise_for_status()
         groups = json.loads(groups_json.content)
-        authorized_users = groups['groups'][self.config['name']]['roster']
+        authorized_users = groups['groups'][self.config.name]['roster']
         # Infra should have access in case they need to help fix things.
         authorized_users.extend(groups['groups']['infra']['roster'])
         # For testing; remove in final version.
@@ -85,19 +85,14 @@ class GithubPoller(MergebotPoller):
         self.COMMANDS = {'merge': self.merge_git}
         # Set up a github helper for handling network requests, etc.
         self.github_helper = github_helper.GithubHelper(
-            self.config['github_org'], self.config['repository'])
+            self.config.github_org, self.config.repository)
 
     def poll(self):
-        """Kicks off polling of Github.
-        """
-        self.l.info('Starting poller for {}.'.format(self.config['name']))
-        database_publisher.publish_poller_status(self.config['name'], 'STARTED')
-        self.poll_github()
-
-    def poll_github(self):
-        """Polls Github for PRs, verifies, then searches them for commands.
-        """
+        """Kicks off polling of Github, searches PRs for commands, and runs."""
+        self.l.info('Starting poller for {}.'.format(self.config.name))
+        db_publisher.publish_poller_status(self.config.name, 'STARTED')
         self.merger.start()
+        name = self.config.name
         # Loop: Forever, every fifteen seconds.
         while True:
             if self.comm_pipe.poll():
@@ -105,20 +100,15 @@ class GithubPoller(MergebotPoller):
                 if t == 'terminate':
                     self.l.info(
                         'Caught termination signal in {name}. Killing merger '
-                        'and exiting.'.format(name=self.config['name']))
+                        'and exiting.'.format(name=name))
                     self.merger_pipe.send('terminate')
-                    database_publisher.publish_poller_status(
-                        self.config['name'],
-                        'TERMINATING')
+                    db_publisher.publish_poller_status(name, 'TERMINATING')
                     self.merger.join()
-                    self.l.info(
-                        '{name} merger killed, poller shutting down.'.format(
-                            name=self.config['name']))
-                    database_publisher.publish_poller_status(
-                        self.config['name'],
-                        'SHUTDOWN')
+                    self.l.info('{name} merger killed, poller shutting '
+                                'down.'.format(name=name))
+                    db_publisher.publish_poller_status(name, 'SHUTDOWN')
                     return
-            database_publisher.publish_poller_heartbeat(self.config['name'])
+            db_publisher.publish_poller_heartbeat(self.config.name)
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
@@ -200,6 +190,6 @@ class GithubPoller(MergebotPoller):
         self.l.info('Command was merge, adding to merge queue.')
         pull.post_info('Adding PR to work queue; current position: '
                        '{pos}.'.format(pos=self.work_queue.qsize() + 1), self.l)
-        database_publisher.publish_enqueue(self.config['name'], pull.get_num())
+        db_publisher.publish_enqueue(self.config.name, pull.get_num())
         self.work_queue.put(pull)
         return True

@@ -36,12 +36,12 @@ def main():
     and its children.
     """
     l.info('Mergebot Manager Starting Up')
+    configs = parse_configs()
+
     l.info('Cleaning Up Old Tables')
     Poller.query.delete()
     QueuedItem.query.delete()
     db.session.commit()
-
-    configs = parse_configs()
 
     # Set signals to ignore while we set up the mergers, then set appropriately.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -61,17 +61,61 @@ def main():
     for poller in pollers:
         poller.process.join()
 
-    l.info('Children killed, terminating.')
+    l.info('Children killed, done.')
+
+
+class MergeBotConfig(object):
+    """Defines MergeBot configuration for a project."""
+    def __init__(self,
+                 name,
+                 github_org,
+                 repository,
+                 merge_branch,
+                 verification_branch,
+                 scm_type,
+                 jenkins_location,
+                 verification_job_name):
+        self.name = name
+        self.github_org = github_org
+        self.repository = repository
+        self.merge_branch = merge_branch
+        self.verification_branch = verification_branch
+        self.scm_type = scm_type
+        self.jenkins_location = jenkins_location
+        self.verification_job_name = verification_job_name
+
+
+def mergebotconfig_constructor(loader, node):
+    values = loader.construct_mapping(node)
+    try:
+        name = values['name']
+        github_org = values['github_org']
+        repository = values['repository']
+        merge_branch = values['merge_branch']
+        verification_branch = values['verification_branch']
+        scm_type = values['scm_type']
+        jenkins_location = values['jenkins_location']
+        verification_job_name = values['verification_job_name']
+    except KeyError as exc:
+        raise yaml.YAMLError('problem with key {exc}'.format(exc=exc))
+    return MergeBotConfig(name,
+                          github_org,
+                          repository,
+                          merge_branch,
+                          verification_branch,
+                          scm_type,
+                          jenkins_location,
+                          verification_job_name)
 
 
 def parse_configs():
     """Parses config files out of config/ directory.
     
     Returns:
-        Array of merger configurations.
+        Array of MergeBotConfig objects.
     """
-    # TODO(jasonkuster): Load configurations into class to enable validation?
     configs = []
+    yaml.add_constructor(u'!MergeBotConfig', mergebotconfig_constructor)
     l.info('Parsing Config Files')
     for filename in glob.iglob('config/*.yaml'):
         with open(filename) as cfg:
@@ -121,7 +165,7 @@ def start_pollers(configs):
         pollers.append(PollerInfo(
             process=p,
             pipe=parent_pipe))
-        l.info('Starting poller for {}.'.format(config['name']))
+        l.info('Starting poller for {}.'.format(config.name))
         p.start()
     return pollers
 

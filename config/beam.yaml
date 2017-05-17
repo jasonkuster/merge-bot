@@ -1,4 +1,4 @@
----
+--- !MergeBotConfig
 name: beam
 github_org: apache
 repository: beam
