@@ -2,55 +2,157 @@ import unittest
 from multiprocessing import Queue
 
 from mock import patch
+import jenkinsapi
 
 from mergebot_backend import merge
+from mergebot import MergeBotConfig
 
 
 class MergeTest(unittest.TestCase):
 
     def setUp(self):
-        q = Queue()
-        config = {'scm_type': 'github', 'name': 'test', 'merge_branch': 'test',
-                  'github_org': 'test', 'repository': 'test',
-                  'verification_command': 'go'}
-        self.gm = merge.create_merger(config, q)
-        self.logger = patch('logging.Logger')
+        self.config = MergeBotConfig(
+            name='test', github_org='test', repository='test',
+            merge_branch='test', verification_branch='test', scm_type='github',
+            jenkins_location='http://test.test', verification_job_name='test')
 
-    @patch('logging.Logger')
-    @patch('merge.GitMerger.run_cmds')
-    @patch('github_helper.GithubPR')
-    def test_merge_git_pr_success(self, mock_pr, mock_run, mock_logger):
-        self.gm.run_cmds = mock_run
-        ret = self.gm.merge_git_pr(mock_pr, '/tmp', mock_logger)
-        self.assertTrue(ret)
-        self.assertEqual(mock_run.call_count, 1)
+    def get_gitmerger_for_testing(self):
+        q = patch('multiprocessing.Queue')
+        pipe = patch('multiprocessing.Connection')
+        gm = merge.create_merger(config=self.config, work_queue=q, pipe=pipe)
+        gm.WAIT_INTERVAL = 0.1
+        gm.JOB_START_TIMEOUT = 0.1
+        return gm
 
-    @patch('logging.Logger')
-    @patch('merge.GitMerger.run_cmds')
-    @patch('github_helper.GithubPR')
-    def test_merge_git_pr_cmd_failure(self, mock_pr, mock_run, mock_logger):
-        mock_run.side_effect = AssertionError
-        self.gm.run_cmds = mock_run
-        ret = self.gm.merge_git_pr(mock_pr, '/tmp', mock_logger)
-        self.assertTrue(ret)
-        self.assertEqual(mock_run.call_count, 1)
+    @patch('mergebot_backend.db_publisher.publish_item_status')
+    @patch('mergebot_backend.merge.GitMerger.execute_merge_lifecycle')
+    @patch('mergebot_backend.merge._clean_up')
+    @patch('mergebot_backend.merge._set_up')
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('mergebot_backend.github_helper.GithubPR')
+    def test_merge_base_exception(self, mock_pr, mock_logger, mock_setup,
+                                  mock_cleanup, mock_eml, mock_pis):
+        gm = self.get_gitmerger_for_testing()
+        mock_eml.side_effect = BaseException('Oh no')
+        with self.assertRaises(BaseException) as context:
+            gm.merge_git_pr(mock_pr)
+        self.assertIn('Oh no', context.exception.message)
+        self.assertEqual(mock_logger.call_count, 1)
+        self.assertEqual(mock_setup.call_count, 1)
+        self.assertEqual(mock_pr.post_error.call_count, 0)
+        self.assertEqual(mock_pis.call_count, 0)
+        self.assertEqual(mock_cleanup.call_count, 1)
 
-    @patch('logging.Logger')
-    @patch('merge.GitMerger.run_cmds')
-    @patch('github_helper.GithubPR')
-    def test_merge_git_pr_post_failure(self, mock_pr, mock_run, mock_logger):
-        mock_run.side_effect = EnvironmentError
-        self.gm.run_cmds = mock_run
-        ret = self.gm.merge_git_pr(mock_pr, '/tmp', mock_logger)
-        self.assertFalse(ret)
-        self.assertEqual(mock_run.call_count, 1)
+    @patch('mergebot_backend.db_publisher.publish_item_status')
+    @patch('mergebot_backend.merge.GitMerger.execute_merge_lifecycle')
+    @patch('mergebot_backend.merge._clean_up')
+    @patch('mergebot_backend.merge._set_up')
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('mergebot_backend.github_helper.GithubPR')
+    def test_merge_assertion_error(self, mock_pr, mock_logger, mock_setup,
+                                   mock_cleanup, mock_eml, mock_pis):
+        gm = self.get_gitmerger_for_testing()
+        mock_eml.side_effect = AssertionError
+        gm.merge_git_pr(mock_pr)
+        self.assertEqual(mock_logger.call_count, 2)
+        self.assertEqual(mock_setup.call_count, 1)
+        self.assertEqual(mock_pr.post_error.call_count, 1)
+        self.assertEqual(mock_pis.call_count, 1)
+        self.assertEqual(mock_cleanup.call_count, 1)
 
+    @patch('mergebot_backend.db_publisher.publish_item_status')
+    @patch('mergebot_backend.merge.GitMerger.execute_merge_lifecycle')
+    @patch('mergebot_backend.merge._clean_up')
+    @patch('mergebot_backend.merge._set_up')
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('mergebot_backend.github_helper.GithubPR')
+    def test_merge_success(self, mock_pr, mock_logger, mock_setup,
+                           mock_cleanup, mock_eml, mock_pis):
+        gm = self.get_gitmerger_for_testing()
+        gm.merge_git_pr(mock_pr)
+        self.assertEqual(mock_eml.call_count, 1)
+        self.assertEqual(mock_logger.call_count, 2)
+        self.assertEqual(mock_setup.call_count, 1)
+        self.assertEqual(mock_pr.post_error.call_count, 0)
+        self.assertEqual(mock_pis.call_count, 0)
+        self.assertEqual(mock_cleanup.call_count, 1)
+
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('mergebot_backend.merge.GitMerger.verify_pr_via_jenkins')
+    @patch('jenkinsapi.job.Job')
+    @patch('mergebot_backend.merge.Jenkins')
+    @patch('mergebot_backend.merge.run_cmds')
+    @patch('mergebot_backend.db_publisher.publish_item_status')
     @patch('logging.Logger')
-    @patch('merge.GitMerger.run_cmds')
-    @patch('github_helper.GithubPR')
-    def test_merge_git_pr_unk_exception(self, mock_pr, mock_run, mock_logger):
-        mock_run.side_effect = Exception
-        self.gm.run_cmds = mock_run
-        ret = self.gm.merge_git_pr(mock_pr, '/tmp', mock_logger)
-        self.assertFalse(ret)
-        self.assertEqual(mock_run.call_count, 1)
+    @patch('mergebot_backend.github_helper.GithubPR')
+    def test_execute_merge_lifecycle_validation_failed(
+            self, mock_pr, mock_logger, mock_pis, mock_run_cmds, mock_jenkins,
+            mock_job, mock_verify, _):
+        gm = self.get_gitmerger_for_testing()
+        mock_job.get_next_build_number.return_value = 5
+        mock_jenkins.return_value = {'test': mock_job}
+        mock_verify.return_value = False
+        with self.assertRaises(AssertionError) as context:
+            gm.execute_merge_lifecycle(mock_pr, '/tmp', mock_logger)
+        self.assertIn('PR failed in verification', context.exception.message)
+        self.assertEqual(mock_pis.call_count, 2)
+        self.assertEqual(mock_run_cmds.call_count, 2)
+
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('mergebot_backend.merge.GitMerger.verify_pr_via_jenkins')
+    @patch('jenkinsapi.job.Job')
+    @patch('mergebot_backend.merge.Jenkins')
+    @patch('mergebot_backend.merge.run_cmds')
+    @patch('mergebot_backend.db_publisher.publish_item_status')
+    @patch('logging.Logger')
+    @patch('mergebot_backend.github_helper.GithubPR')
+    def test_execute_merge_lifecycle_validation_success(
+            self, mock_pr, mock_logger, mock_pis, mock_run_cmds, mock_jenkins,
+            mock_job, mock_verify, _):
+        gm = self.get_gitmerger_for_testing()
+        mock_job.get_next_build_number.return_value = 5
+        mock_jenkins.return_value = {'test': mock_job}
+        mock_verify.return_value = True
+        gm.execute_merge_lifecycle(mock_pr, '/tmp', mock_logger)
+        self.assertEqual(mock_pis.call_count, 3)
+        self.assertEqual(mock_run_cmds.call_count, 3)
+
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('mergebot_backend.db_publisher.publish_item_status')
+    @patch('logging.Logger')
+    @patch('mergebot_backend.github_helper.GithubPR')
+    @patch('jenkinsapi.job.Job')
+    def test_verify_jenkins_no_build(self, mock_job, mock_pr, mock_logger,
+                                     pis, _):
+        gm = self.get_gitmerger_for_testing()
+        mock_job.get_build.side_effect = jenkinsapi.custom_exceptions.NotFound
+        with self.assertRaises(AssertionError) as context:
+            gm.verify_pr_via_jenkins(mock_job, 0, mock_pr, mock_logger)
+        self.assertIn('Timed out trying to find verification job.',
+                      context.exception.message)
+        self.assertEqual(pis.call_count, 1)
+
+    @patch('mergebot_backend.merge.get_logger')
+    @patch('jenkinsapi.build.Build')
+    @patch('mergebot_backend.db_publisher.publish_item_heartbeat')
+    @patch('mergebot_backend.db_publisher.publish_item_status')
+    @patch('logging.Logger')
+    @patch('mergebot_backend.github_helper.GithubPR')
+    @patch('jenkinsapi.job.Job')
+    def test_verify_jenkins_failure_success(
+            self, mock_job, mock_pr, mock_logger, pis, pih, mock_build, _):
+        gm = self.get_gitmerger_for_testing()
+        mock_build.get_status.return_value = "FAILURE"
+        mock_build.is_running.side_effect = [True, True, False]
+        mock_job.get_build.return_value = mock_build
+        self.assertFalse(gm.verify_pr_via_jenkins(mock_job, 0, mock_pr,
+                                                  mock_logger))
+        self.assertEqual(pis.call_count, 3)
+        self.assertEqual(pih.call_count, 2)
+        mock_build.get_status.return_value = "SUCCESS"
+        mock_build.is_running.side_effect = [True, True, False]
+        mock_job.get_build.return_value = mock_build
+        self.assertTrue(gm.verify_pr_via_jenkins(mock_job, 0, mock_pr,
+                                                 mock_logger))
+        self.assertEqual(pis.call_count, 6)
+        self.assertEqual(pih.call_count, 4)

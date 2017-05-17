@@ -144,20 +144,17 @@ class GitMerger(Merger):
 
     def __init__(self, config, work_queue, pipe):
         super(GitMerger, self).__init__(config, work_queue, pipe)
-        branch = self.config.merge_branch
-        verification_branch = self.config.verification_branch
-        org = self.config.github_org
         remote_name = 'apache'
-        repo = self.config.repository
         self.common_vars = {
-            'apache_url': self.APACHE_GIT.format(repo=repo),
-            'branch': branch,
+            'apache_url': self.APACHE_GIT.format(repo=self.config.repository),
+            'branch': self.config.merge_branch,
             'branch_path': '{remote}/{branch}'.format(
-                remote=remote_name, branch=branch),
+                remote=remote_name, branch=self.config.merge_branch),
             'remote_name': remote_name,
-            'repo': repo,
-            'repo_url': self.GITHUB_REPO_URL.format(org=org, repo=repo),
-            'verification_branch': verification_branch,
+            'repo': self.config.repository,
+            'repo_url': self.GITHUB_REPO_URL.format(
+                org=self.config.github_org, repo=self.config.repository),
+            'verification_branch': self.config.verification_branch,
         }
 
     def run(self):
@@ -370,7 +367,7 @@ class GitMerger(Merger):
 
         while build.is_running():
             db_publisher.publish_item_heartbeat(name, pr_num)
-            time.sleep(10)
+            time.sleep(self.WAIT_INTERVAL)
 
         # For some reason, the build does not have a status upon completion and
         # we have to fetch it again. A fairly extensive live debug failed to

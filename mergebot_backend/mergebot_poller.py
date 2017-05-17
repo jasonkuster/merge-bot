@@ -154,8 +154,9 @@ class GithubPoller(MergebotPoller):
         # FUTURE: Look for @merge-bot reply comments.
         # FUTURE: Use mentions API instead?
         if not cmt_body.startswith('@{}'.format(BOT_NAME)):
-            self.l.info('Last comment not a command. Moving on. Comment: ')
-            self.l.info(cmt_body)
+            self.l.info(
+                'Last comment not a command. Moving on. Comment: {cmt}'.format(
+                    cmt=cmt_body))
             return True
         # Check auth.
         user = cmt.get_user()
