@@ -11,7 +11,7 @@ GITHUB_REPO_FMT_URL = GITHUB_API_ROOT + '/repos/{0}/{1}/'
 GITHUB_PULLS_ENDPOINT = 'pulls'
 
 BOT_NAME = 'apache-merge-bot'
-GITHUB_SECRET = '../../github_auth/mergebot.secret'
+GITHUB_SECRET = 'mergebot.secret'
 
 
 class GithubHelper(object):
@@ -20,7 +20,7 @@ class GithubHelper(object):
 
     def __init__(self, org, repo):
         self.repo_url = GITHUB_REPO_FMT_URL.format(org, repo)
-        with open(GITHUB_SECRET, 'r') as key_file:
+        with open(GITHUB_SECRET) as key_file:
             self.bot_key = key_file.read().strip()
 
     def fetch_prs(self):

@@ -2,7 +2,7 @@
 
 import unittest
 
-from mock import MagicMock, patch
+from mock import MagicMock, call, patch
 
 from mergebot_backend import mergebot_poller
 from mergebot import MergeBotConfig
@@ -44,6 +44,23 @@ class GithubPollerTest(unittest.TestCase):
             mergebot_poller.create_poller(mock_config, MagicMock())
         self.assertEqual('Unsupported SCM Type: unicorn.',
                          context.exception.message)
+
+    @patch('mergebot_backend.db_publisher.publish_poller_heartbeat')
+    @patch('mergebot_backend.db_publisher.publish_poller_status')
+    def test_terminate(self, mock_status, mock_heartbeat):
+        ghp = self.create_poller_for_testing()
+        pipe = MagicMock()
+        pipe.poll.side_effect = [False, True]
+        ghp.comm_pipe = pipe
+        ghp.github_helper.fetch_prs.return_value = ([MagicMock()], None)
+        ghp.check_pr = lambda prs: None
+        ghp.POLL_WAIT = 0.1
+        ghp.comm_pipe.recv.return_value = 'terminate'
+        ghp.poll()
+        calls = [call('test', 'STARTED'), call('test', 'TERMINATING'),
+                 call('test', 'SHUTDOWN')]
+        mock_status.assert_has_calls(calls)
+        self.assertEqual(mock_heartbeat.call_count, 1)
 
     @patch('mergebot_backend.github_helper.GithubPR')
     def testCheckValidPR(self, mock_pr):
