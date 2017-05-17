@@ -15,10 +15,20 @@ from Queue import Empty
 from subprocess import check_call, check_output, STDOUT, CalledProcessError
 from threading import Thread
 
-from mergebot_backend import database_publisher
+from mergebot_backend import db_publisher
 from mergebot_backend.log_helper import get_logger
 
 TMP_DIR_FMT = '/tmp/{dir}'
+JENKINS_TIMEOUT_ERR = ('Timed out trying to find verification job. Check '
+                       'Jenkins ({url}) to ensure job is configured correctly.')
+JENKINS_STARTED_MSG = ('Job verification started. Verification job is [here]'
+                       '({build_url}) (may still be pending; if page 404s, '
+                       'check job status page [here]({job_url})).')
+
+
+class Terminate(Exception):
+    """Terminate is a custom exception for when we want to end."""
+    pass
 
 
 class Command(object):
@@ -42,10 +52,10 @@ def create_merger(config, work_queue, pipe):
     Raises:
         AttributeError: if passed an unsupported SCM type.
     """
-    if config['scm_type'] == 'github':
+    if config.scm_type == 'github':
         return GitMerger(config, work_queue, pipe)
     raise AttributeError(
-        'Unsupported SCM type: {type}.'.format(type=config['scm_type']))
+        'Unsupported SCM type: {type}.'.format(type=config.scm_type))
 
 
 class Merger(Thread):
@@ -56,8 +66,7 @@ class Merger(Thread):
     def __init__(self, config, work_queue, pipe):
         self.config = config
         self.merge_logger = get_logger(
-            '{name}_merge'.format(name=self.config['name']),
-            redirect_to_file=True)
+            '{name}_merge'.format(name=self.config.name), redirect_to_file=True)
         self.work_queue = work_queue
         self.pipe = pipe
         Thread.__init__(self)
@@ -135,11 +144,11 @@ class GitMerger(Merger):
 
     def __init__(self, config, work_queue, pipe):
         super(GitMerger, self).__init__(config, work_queue, pipe)
-        branch = self.config['merge_branch']
-        verification_branch = self.config['verification_branch']
-        org = self.config['github_org']
+        branch = self.config.merge_branch
+        verification_branch = self.config.verification_branch
+        org = self.config.github_org
         remote_name = 'apache'
-        repo = self.config['repository']
+        repo = self.config.repository
         self.common_vars = {
             'apache_url': self.APACHE_GIT.format(repo=repo),
             'branch': branch,
@@ -157,53 +166,23 @@ class GitMerger(Merger):
         Raises:
             AttributeError: if work items are not of type github_helper.GithubPR
         """
-        database_publisher.publish_merger_status(self.config['name'], 'STARTED')
-        terminate = False
+        db_publisher.publish_merger_status(self.config.name, 'STARTED')
+        name = self.config.name
         while True:
             pr = None
             while not pr:
-                if self.pipe.poll():
-                    msg = self.pipe.recv()
-                    if msg == 'terminate':
-                        terminate = True
-                        self.merge_logger.info('Caught termination signal.')
                 try:
-                    if not terminate:
-                        pr = self.work_queue.get(timeout=5)
-                        database_publisher.publish_dequeue(
-                            self.config['name'],
-                            pr.get_num())
-                        break
-                    while True:
-                        pr = self.work_queue.get_nowait()
-                        database_publisher.publish_dequeue(
-                            self.config['name'],
-                            pr.get_num())
-                        pr.post_info('MergeBot shutting down; please resubmit '
-                                     'when MergeBot is back up.',
-                                     self.merge_logger)
-                except Empty:
-                    if terminate:
-                        database_publisher.publish_merger_status(
-                            self.config['name'], 'SHUTDOWN')
-                        return
-                except BaseException as exc:
-                    self.merge_logger.error("Unhandled exception: {exc}".format(
-                        exc=exc))
-                    if terminate:
-                        database_publisher.publish_merger_status(
-                            self.config['name'], 'SHUTDOWN')
-                        return
+                    pr = self.fetch_from_queue()
+                except Terminate:
+                    return
+                time.sleep(1)
 
             pr_num = pr.get_num()
             self.merge_logger.info(
                 'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
             self.merge_logger.info('{remaining} work items remaining.'.format(
                 remaining=self.work_queue.qsize()))
-            database_publisher.publish_item_status(
-                self.config['name'],
-                pr_num,
-                'START')
+            db_publisher.publish_item_status(name, pr_num, 'START')
             try:
                 pr.post_info(
                     'MergeBot starting work on PR#{pr_num}.'.format(
@@ -211,20 +190,61 @@ class GitMerger(Merger):
                     self.merge_logger)
                 self.merge_git_pr(pr)
             except BaseException as exc:
-                pr.post_error('MergeBot encountered an unexpected error while '
-                              'processing this PR: {exc}.'.format(exc=exc),
-                              self.merge_logger)
-                database_publisher.publish_item_status(
-                    self.config['name'],
-                    pr_num,
-                    'ERROR: {exc}'.format(exc=exc))
-                self.merge_logger.error('Exception while merging PR: '
-                                        '{exc}.'.format(exc=exc))
+                pr.post_error(
+                    'MergeBot encountered an unexpected error while processing '
+                    'this PR: {exc}.'.format(exc=exc), self.merge_logger)
+                db_publisher.publish_item_status(
+                    name, pr_num, 'ERROR: {exc}'.format(exc=exc))
+                self.merge_logger.error('Unexpected exception while merging '
+                                        'PR: {exc}.'.format(exc=exc))
             finally:
-                database_publisher.publish_item_status(
-                    self.config['name'],
-                    pr_num,
-                    'FINISH')
+                self.merge_logger.info(
+                    'PR#{num} processing done.'.format(num=pr_num))
+                db_publisher.publish_item_status(name, pr_num, 'FINISH')
+
+    def fetch_from_queue(self):
+        """fetch_from_queue tries to pull a PR off of the queue.
+        
+        Raises:
+            merge.Terminate if we receive the termination signal.
+        Returns:
+            github_helper.GithubPR off the queue, or None if there were none.
+        """
+        terminate = False
+        name = self.config.name
+        if self.pipe.poll():
+            msg = self.pipe.recv()
+            if msg == 'terminate':
+                terminate = True
+                self.merge_logger.info('Caught termination signal.')
+        try:
+            if terminate:
+                while True:
+                    self.flush_queue()
+            else:
+                pr = self.work_queue.get(timeout=5)
+                db_publisher.publish_dequeue(name, pr.get_num())
+                return pr
+        except Empty:
+            self.merge_logger.info('Queue was empty.')
+        except BaseException as exc:
+            self.merge_logger.error(
+                "Unhandled exception: {exc}".format(exc=exc))
+        if terminate:
+            db_publisher.publish_merger_status(name, 'SHUTDOWN')
+            raise Terminate
+        return None
+
+    def flush_queue(self):
+        """flush_queue posts a shutdown message to a PR in the queue.
+        
+        Raises:
+            Queue.Empty if there is nothing in the queue.
+        """
+        pr = self.work_queue.get_nowait()
+        db_publisher.publish_dequeue(self.config.name, pr.get_num())
+        pr.post_info('MergeBot shutting down; please resubmit when MergeBot is '
+                     'back up.', self.merge_logger)
 
     def merge_git_pr(self, pr):
         """merge_git_pr takes care of the overall merge process for a PR.
@@ -236,39 +256,27 @@ class GitMerger(Merger):
         # started work, finished work, etc. pr_logger is for pr-merging
         # lifecycle events: clone, merge, push, etc.
         pr_num = pr.get_num()
-        logger_name = '{name}_pr_{pr_num}_merge'.format(
-            name=self.config['name'],
-            pr_num=pr_num)
-        pr_logger = get_logger(logger_name, redirect_to_file=True)
-        pr_logger.info('Starting merge process for #{pr_num}.'.format(
-            pr_num=pr_num))
+        name = self.config.name
+        pr_logger = get_logger(
+            name='{name}_pr_{pr_num}_merge'.format(name=name, pr_num=pr_num),
+            redirect_to_file=True)
+        pr_logger.info(
+            'Starting merge process for #{pr_num}.'.format(pr_num=pr_num))
 
         tmp_dir = None
         try:
-            tmp_dir = TMP_DIR_FMT.format(dir='{repo}-{pr_num}'.format(
-                repo=self.config['repository'],
-                pr_num=pr_num))
+            tmp_dir = TMP_DIR_FMT.format(
+                dir='{repo}-{pr_num}'.format(
+                    repo=self.config.repository,
+                    pr_num=pr_num))
             _set_up(tmp_dir)
             self.execute_merge_lifecycle(pr, tmp_dir, pr_logger)
         except AssertionError as exc:
             pr.post_error(exc, pr_logger)
-            database_publisher.publish_item_status(
-                self.config['name'],
-                pr_num,
-                'ERROR: {exc}'.format(exc=exc))
-        except BaseException as exc:
-            pr.post_error('MergeBot encountered an error: {exc}.'.format(
-                exc=exc), pr_logger)
-            database_publisher.publish_item_status(
-                self.config['name'],
-                pr_num,
-                'ERROR: {exc}'.format(exc=exc))
-            pr_logger.error('Unhandled exception caught: {exc}.'.format(
-                exc=exc))
+            db_publisher.publish_item_status(
+                name, pr_num, 'ERROR: {exc}'.format(exc=exc))
         finally:
             _clean_up(tmp_dir)
-            self.merge_logger.info(
-                'PR#{num} processing done.'.format(num=pr_num))
 
     def execute_merge_lifecycle(self, pr, tmp_dir, pr_logger):
         """execute_merge_lifecycle merges git pull requests.
@@ -281,6 +289,7 @@ class GitMerger(Merger):
             AssertionError if there was a problem with merging the PR.
         """
         pr_num = pr.get_num()
+        name = self.config.name
         pr_vars = self.common_vars.copy()
         pr_vars.update({
             'msg': 'This closes #{pr_num}'.format(pr_num=pr_num),
@@ -289,20 +298,14 @@ class GitMerger(Merger):
         })
 
         pr_logger.info('Beginning pre-verification phase.')
-        database_publisher.publish_item_status(
-            self.config['name'],
-            pr_num,
-            'PREPARE')
+        db_publisher.publish_item_status(name, pr_num, 'PREPARE')
         run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
         pr_logger.info("Successfully finished pre-verification phase.")
 
         pr_logger.info("Starting verification phase.")
-        database_publisher.publish_item_status(
-            self.config['name'],
-            pr_num,
-            'VERIFY')
-        jenkins = Jenkins(self.config['jenkins_location'])
-        job = jenkins[self.config['verification_job_name']]
+        db_publisher.publish_item_status(name, pr_num, 'VERIFY')
+        jenkins = Jenkins(self.config.jenkins_location)
+        job = jenkins[self.config.verification_job_name]
         build_num = job.get_next_build_number()
         run_cmds(self.VERIFICATION_CMDS, pr_vars, tmp_dir, pr_logger)
 
@@ -316,14 +319,11 @@ class GitMerger(Merger):
         pr_logger.info('Job verification succeeded.')
 
         pr_logger.info('Starting final push.')
-        database_publisher.publish_item_status(
-            self.config['name'],
-            pr_num,
-            'MERGE')
+        db_publisher.publish_item_status(name, pr_num, 'MERGE')
         run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr_logger)
         pr.post_info('PR merge succeeded!', pr_logger)
-        pr_logger.info('Merge for {pr_num} completed successfully.'.format(
-            pr_num=pr_num))
+        pr_logger.info(
+            'Merge for {pr_num} completed successfully.'.format(pr_num=pr_num))
 
     def verify_pr_via_jenkins(self, job, build_num, pr, pr_logger):
         """Checks against the configured Jenkins job for verification.
@@ -341,52 +341,35 @@ class GitMerger(Merger):
         wait_secs = 0
         build = None
         pr_num = pr.get_num()
-        database_publisher.publish_item_status(
-            self.config['name'],
-            pr_num,
-            'WAIT_ON_JOB_START')
-        while wait_secs < self.JOB_START_TIMEOUT:
+        name = self.config.name
+        db_publisher.publish_item_status(name, pr_num, 'WAIT_ON_JOB_START')
+        while not build and wait_secs < self.JOB_START_TIMEOUT:
             try:
                 build = job.get_build(build_num)
-                break
             except NotFound:
-                pr_logger.info("Waiting on job start, {wait} secs.".format(
-                    wait=wait_secs))
-            time.sleep(self.WAIT_INTERVAL)
-            wait_secs += self.WAIT_INTERVAL
+                pr_logger.info(
+                    "Waiting on job start, {wait} secs.".format(wait=wait_secs))
+                time.sleep(self.WAIT_INTERVAL)
+                wait_secs += self.WAIT_INTERVAL
 
         job_url = urlparse.urljoin(
-            self.config['jenkins_location'], '/job/{job_name}/'.format(
-                job_name=self.config['verification_job_name']))
+            self.config.jenkins_location, '/job/{job_name}/'.format(
+                job_name=self.config.verification_job_name))
         if not build:
             pr_logger.error('Timed out trying to find the verification job.')
-            raise AssertionError(
-                'Timed out trying to find verification job. Check Jenkins '
-                '({url}) to ensure job is configured correctly.'.format(
-                    url=job_url))
+            raise AssertionError(JENKINS_TIMEOUT_ERR.format(url=job_url))
 
         pr_logger.info("Build #{build_num} found.".format(build_num=build_num))
         build_url = urlparse.urljoin(job_url, str(build_num))
 
-        text = ('Job verification started. Verification job is '
-                '[here]({build_url}) (may still be pending; if page 404s, '
-                'check job status page [here]({job_url})).'.format(
-                    build_url=build_url,
-                    job_url=job_url))
-        pr.post_info(text, pr_logger)
-        database_publisher.publish_item_status(
-            self.config['name'],
-            pr_num,
-            'JOB_FOUND: {build_url}'.format(build_url=build_url))
-        database_publisher.publish_item_status(
-            self.config['name'],
-            pr_num,
-            'JOB_WAIT')
+        pr.post_info(JENKINS_STARTED_MSG.format(build_url=build_url,
+                                                job_url=job_url), pr_logger)
+        db_publisher.publish_item_status(
+            name, pr_num, 'JOB_FOUND: {build_url}'.format(build_url=build_url))
+        db_publisher.publish_item_status(name, pr_num, 'JOB_WAIT')
 
         while build.is_running():
-            database_publisher.publish_item_heartbeat(
-                self.config['name'],
-                pr_num)
+            db_publisher.publish_item_heartbeat(name, pr_num)
             time.sleep(10)
 
         # For some reason, the build does not have a status upon completion and
@@ -460,5 +443,5 @@ def _clean_up(tmp_dir):
     try:
         check_call(['rm', '-rf', tmp_dir])
         return None
-    except:
-        return 'Cleanup failed.'
+    except BaseException as exc:
+        return 'Cleanup failed: {exc}.'.format(exc=exc)
