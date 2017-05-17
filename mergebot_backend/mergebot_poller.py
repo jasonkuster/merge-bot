@@ -80,6 +80,8 @@ class GithubPoller(MergebotPoller):
     """GithubPoller polls Github repositories and merges them.
     """
 
+    POLL_WAIT = 15
+
     def __init__(self, config, comm_pipe):
         super(GithubPoller, self).__init__(config, comm_pipe)
         self.COMMANDS = {'merge': self.merge_git}
@@ -116,7 +118,7 @@ class GithubPoller(MergebotPoller):
                 continue
             for pull in prs:
                 self.check_pr(pull)
-            time.sleep(15)
+            time.sleep(self.POLL_WAIT)
 
     def check_pr(self, pull):
         """Determines if a pull request should be evaluated.

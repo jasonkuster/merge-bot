@@ -13,6 +13,9 @@ log
 # virtualenv
 merge
 
+# Mergebot secret
+mergebot.secret
+
 # Database
 db
 
