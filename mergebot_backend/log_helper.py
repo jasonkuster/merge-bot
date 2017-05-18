@@ -12,7 +12,7 @@ def get_logger(name, redirect_to_file=False):
     
     Args:
         name: Name to use to acquire this logger.
-        redirect_to_file: If true, prints log.
+        redirect_to_file: If true, prints log to file instead of STDOUT.
 
     Returns:
         A logging.Logger for the specified arguments.

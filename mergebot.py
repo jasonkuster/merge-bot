@@ -18,7 +18,7 @@ l = get_logger('mergebot')
 
 
 def shutdown_mergebot(signum, _):
-    """shutdown_mergebot is the signal handler used to send the kill signal."""
+    """shutdown_mergebot is the handler used to receive the kill signal."""
     print 'Caught {signal}.'.format(signal=signum)
     raise ServerExit
 
@@ -35,10 +35,10 @@ def main():
     successfully read in. It then waits for the signal to shut down itself 
     and its children.
     """
-    l.info('Mergebot Manager Starting Up')
+    l.info('Mergebot manager starting up.')
     configs = parse_configs()
 
-    l.info('Cleaning Up Old Tables')
+    l.info('Cleaning up old tables.')
     Poller.query.delete()
     QueuedItem.query.delete()
     db.session.commit()
@@ -86,6 +86,10 @@ class MergeBotConfig(object):
 
 
 def mergebotconfig_constructor(loader, node):
+    """mergebotconfig_constructor is an object constructor for the yaml library.
+       It is intended to be used to validate that all configs contain the
+       appropriate fields.
+    """
     values = loader.construct_mapping(node)
     try:
         name = values['name']
@@ -146,7 +150,11 @@ def poll_scm(config, pipe):
         pipe: Communication pipe for passing messages.
     """
     poller = mergebot_poller.create_poller(config, pipe)
-    poller.poll()
+    try:
+        poller.poll()
+    except BaseException as exc:
+        l.error('Poller for {name} crashed with exception {exc}. Please '
+                'restart and try again'.format(name=config.name, exc=exc))
 
 
 def start_pollers(configs):

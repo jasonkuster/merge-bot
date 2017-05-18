@@ -366,7 +366,12 @@ class GitMerger(Merger):
         db_publisher.publish_item_status(name, pr_num, 'JOB_WAIT')
 
         while build.is_running():
-            db_publisher.publish_item_heartbeat(name, pr_num)
+            try:
+                db_publisher.publish_item_heartbeat(name, pr_num)
+            except KeyError as exc:
+                pr_logger.error("Couldn't find JOB_WAIT to update -- ending.")
+                raise AssertionError("Internal Error: Couldn't find JOB_WAIT "
+                                     "to update.")
             time.sleep(self.WAIT_INTERVAL)
 
         # For some reason, the build does not have a status upon completion and

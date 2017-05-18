@@ -17,6 +17,7 @@ def publish_poller_status(project_name, status):
             poller = Poller(project_name, datetime.now())
             db.session.add(poller)
         poller.status = 'STARTED'
+        poller.timestamp = datetime.now()
     elif status == 'TERMINATING':
         if not poller:
             raise ValueError(
@@ -122,10 +123,14 @@ def publish_item_heartbeat(project_name, item_id):
     Args:
         project_name: Name of the project this item belongs to. 
         item_id: Unique work item identifier (e.g. PR number).
+    Raises:
+        KeyError if the corresponding job_wait cannot be found.
     """
     item_status = WorkItemStatus.query.order_by(
         WorkItemStatus.timestamp).filter_by(project_name=project_name,
                                             item_id=item_id,
                                             status='JOB_WAIT').first()
+    if not item_status:
+        raise KeyError('JOB_WAIT not found.')
     item_status.timestamp = datetime.now()
     db.session.commit()
