@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Apache Mergebot: {{ poller.project_name }}{% endblock %}
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-xs-12">
+            <h1>MergeBot For: {{ poller.project_name }}</h1>
+        </div>
+    </div>
+    {% if active %}
+    <div class="row">
+        <div class="col-xs-12">
+            <h2>Active Project</h2>
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h3 class="panel-title pull-left">PR# {{ active.item_id }}</h3>
+                    <a class="panel-title pull-right" href="/{{ active.project_name }}/{{active.item_id}}">Link</a>
+                    <div class="clearfix"></div>
+                </div>
+                <div class="panel-body">
+                    <p>Status: {{ active.status }}</p>
+                    <p>Last Updated: {{ active.timestamp }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% if queue %}
+    <div class="row">
+        <div class="col-xs-12">
+            <h2>Queued Items</h2>
+        </div>
+    </div>
+    {% for item in queue %}
+    <div class="row">
+        <div class="col-xs-12 projitem">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h3 class="panel-title pull-left">PR# {{ item.item_id }}</h3>
+                    <div class="clearfix"></div>
+                </div>
+                <div class="panel-body">
+                    Added: {{ item.timestamp }}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if not active and not queue %}
+    <div class="row">
+        <div class="col-xs-12 projitem">
+            <div class="panel panel-default">
+                <div class="panel-body">
+                    No Pending Requests
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
