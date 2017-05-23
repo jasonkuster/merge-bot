@@ -38,6 +38,12 @@ def project(proj):
         project_name=proj,
         status='FINISH',
     ).order_by(WorkItemStatus.timestamp.desc()).first()
+    # This conditional is designed to find the active project, if there is one.
+    # Breaking it down: `if last_start` determines if any work item has been
+    # started. If so, it checks if any work item has been finished. If no, the
+    # started work item must be active. If yes, then if the latest start is
+    # newer than the latest finish it must be the active one, otherwise there
+    # must not be any active work items.
     if last_start and (not last_finish or (last_start.timestamp >
                                                last_finish.timestamp)):
         active = WorkItemStatus.query.filter_by(
