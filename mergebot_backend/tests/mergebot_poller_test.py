@@ -16,6 +16,7 @@ class GithubPollerTest(unittest.TestCase):
             merge_branch='test', verification_branch='test', scm_type='github',
             jenkins_location='http://test.test', verification_job_name='test')
 
+    @patch('mergebot_backend.db_publisher.DBPublisher')
     @patch('mergebot_backend.github_helper.GithubHelper')
     @patch(
         'mergebot_backend.mergebot_poller.MergebotPoller.get_authorized_users')
@@ -24,7 +25,8 @@ class GithubPollerTest(unittest.TestCase):
     @patch('mergebot_backend.mergebot_poller.Queue')
     @patch('mergebot_backend.mergebot_poller.get_logger')
     def create_poller_for_testing(self, mock_logger, mock_queue, mock_pipe,
-                                  mock_create, mock_authorized, mock_helper):
+                                  mock_create, mock_authorized, mock_helper,
+                                  mock_publisher):
         pipe = MagicMock()
         mock_pipe.return_value = (MagicMock(), MagicMock())
         mock_authorized.return_value = ['authorized']
@@ -45,9 +47,7 @@ class GithubPollerTest(unittest.TestCase):
         self.assertEqual('Unsupported SCM Type: unicorn.',
                          context.exception.message)
 
-    @patch('mergebot_backend.db_publisher.publish_poller_heartbeat')
-    @patch('mergebot_backend.db_publisher.publish_poller_status')
-    def test_terminate(self, mock_status, mock_heartbeat):
+    def test_terminate(self):
         ghp = self.create_poller_for_testing()
         pipe = MagicMock()
         pipe.poll.side_effect = [False, True]
@@ -57,10 +57,10 @@ class GithubPollerTest(unittest.TestCase):
         ghp.POLL_WAIT = 0.1
         ghp.comm_pipe.recv.return_value = 'terminate'
         ghp.poll()
-        calls = [call('test', 'STARTED'), call('test', 'TERMINATING'),
-                 call('test', 'SHUTDOWN')]
-        mock_status.assert_has_calls(calls)
-        self.assertEqual(mock_heartbeat.call_count, 1)
+        calls = [call(status='STARTED'), call(status='TERMINATING'),
+                 call(status='SHUTDOWN')]
+        ghp.publisher.publish_poller_status.assert_has_calls(calls)
+        self.assertEqual(ghp.publisher.publish_poller_heartbeat.call_count, 1)
 
     @patch('mergebot_backend.github_helper.GithubPR')
     def testCheckValidPR(self, mock_pr):

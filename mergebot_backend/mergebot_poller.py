@@ -41,6 +41,7 @@ class MergebotPoller(object):
         self.config = config
         self.comm_pipe = comm_pipe
         self.l = get_logger(name=self.config.name, redirect_to_file=True)
+        self.publisher = db_publisher.DBPublisher(name=self.config.name)
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
@@ -92,7 +93,7 @@ class GithubPoller(MergebotPoller):
     def poll(self):
         """Kicks off polling of Github, searches PRs for commands, and runs."""
         self.l.info('Starting poller for {}.'.format(self.config.name))
-        db_publisher.publish_poller_status(self.config.name, 'STARTED')
+        self.publisher.publish_poller_status(status='STARTED')
         self.merger.start()
         name = self.config.name
         # Loop: Forever, every fifteen seconds.
@@ -104,13 +105,13 @@ class GithubPoller(MergebotPoller):
                         'Caught termination signal in {name}. Killing merger '
                         'and exiting.'.format(name=name))
                     self.merger_pipe.send('terminate')
-                    db_publisher.publish_poller_status(name, 'TERMINATING')
+                    self.publisher.publish_poller_status(status='TERMINATING')
                     self.merger.join()
                     self.l.info('{name} merger killed, poller shutting '
                                 'down.'.format(name=name))
-                    db_publisher.publish_poller_status(name, 'SHUTDOWN')
+                    self.publisher.publish_poller_status(status='SHUTDOWN')
                     return
-            db_publisher.publish_poller_heartbeat(self.config.name)
+            self.publisher.publish_poller_heartbeat()
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
@@ -194,6 +195,6 @@ class GithubPoller(MergebotPoller):
         self.l.info('Command was merge, adding to merge queue.')
         pull.post_info('Adding PR to work queue; current position: '
                        '{pos}.'.format(pos=self.work_queue.qsize() + 1), self.l)
-        db_publisher.publish_enqueue(self.config.name, pull.get_num())
+        self.publisher.publish_enqueue(item_id=pull.get_num())
         self.work_queue.put(pull)
         return True
