@@ -5,53 +5,68 @@ inherit and a create_poller method which allows creation of SCM pollers.
 """
 
 
-import logging
-from multiprocessing import Queue
-import os
+import json
 import time
-import github_helper
-import merge
+from multiprocessing import Pipe, Queue
 
-# TODO(jasonkuster): Fetch authorized users from somewhere official.
-AUTHORIZED_USERS = ['davorbonaci', 'jasonkuster']
+import requests
+
+from mergebot_backend import db_publisher, github_helper, merge
+from mergebot_backend.log_helper import get_logger
+
 BOT_NAME = 'apache-merge-bot'
 
 
-def create_poller(config):
+def create_poller(config, comm_pipe):
     """create_poller creates a poller of the type specified in the config.
 
     Args:
         config: A dictionary containing repository configuration.
+        comm_pipe: multiprocessing Pipe with which to communicate with parent.
     Returns:
         MergebotPoller of type specified in configuration
     Raises:
         AttributeError: if passed an unsupported SCM type.
     """
-    if config['scm_type'] == 'github':
-        return GithubPoller(config)
-    raise AttributeError('Unsupported SCM Type: {}.'.format(config['scm_type']))
+    if config.scm_type == 'github':
+        return GithubPoller(config, comm_pipe)
+    raise AttributeError('Unsupported SCM Type: {}.'.format(config.scm_type))
 
 
 class MergebotPoller(object):
     """MergebotPoller is a base class for polling SCMs.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, comm_pipe):
         self.config = config
+        self.comm_pipe = comm_pipe
+        self.l = get_logger(name=self.config.name, redirect_to_file=True)
+        self.publisher = db_publisher.DBPublisher(name=self.config.name)
         # Instantiate the two variables used for tracking work.
         self.work_queue = Queue()
         self.known_work = {}
-        l = logging.getLogger('{name}_logger'.format(name=config['name']))
-        log_fmt = '[%(levelname).1s-%(asctime)s %(filename)s:%(lineno)s] %(message)s'
-        date_fmt = '%m/%d %H:%M:%S'
-        f = logging.Formatter(log_fmt, date_fmt)
-        h = logging.FileHandler(
-            os.path.join('log', '{name}_log.txt'.format(name=config['name'])))
-        h.setFormatter(f)
-        l.addHandler(h)
-        l.setLevel(logging.INFO)
-        self.l = l
-        self.merger = merge.create_merger(config, self.work_queue)
+        # Pipe used to communicate with its merger.
+        self.merger_pipe, child_pipe = Pipe()
+        self.merger = merge.create_merger(config, self.work_queue, child_pipe)
+        self.authorized_users = self.get_authorized_users()
+
+    def get_authorized_users(self):
+        """Fetches the list of users allowed to command this poller.
+        
+        Returns:
+            List of GitHub usernames of committers for this project.
+        """
+        # TODO(jasonkuster): Fetch canonical usernames from Gitbox.
+        groups_json = requests.get(
+            'https://people.apache.org/public/public_ldap_groups.json')
+        groups_json.raise_for_status()
+        groups = json.loads(groups_json.content)
+        authorized_users = groups['groups'][self.config.name]['roster']
+        # Infra should have access in case they need to help fix things.
+        authorized_users.extend(groups['groups']['infra']['roster'])
+        # For testing; remove in final version.
+        authorized_users.append(u'jasonkuster')
+        return authorized_users
 
     def poll(self):
         """Poll should be implemented by subclasses as the main entry point.
@@ -66,25 +81,37 @@ class GithubPoller(MergebotPoller):
     """GithubPoller polls Github repositories and merges them.
     """
 
-    def __init__(self, config):
-        super(GithubPoller, self).__init__(config)
+    POLL_WAIT = 15
+
+    def __init__(self, config, comm_pipe):
+        super(GithubPoller, self).__init__(config, comm_pipe)
         self.COMMANDS = {'merge': self.merge_git}
         # Set up a github helper for handling network requests, etc.
         self.github_helper = github_helper.GithubHelper(
-            self.config['github_org'], self.config['repository'])
+            self.config.github_org, self.config.repository)
 
     def poll(self):
-        """Kicks off polling of Github.
-        """
-        self.l.info('Starting poller for {}.'.format(self.config['name']))
-        self.poll_github()
-
-    def poll_github(self):
-        """Polls Github for PRs, verifies, then searches them for commands.
-        """
+        """Kicks off polling of Github, searches PRs for commands, and runs."""
+        self.l.info('Starting poller for {}.'.format(self.config.name))
+        self.publisher.publish_poller_status(status='STARTED')
         self.merger.start()
+        name = self.config.name
         # Loop: Forever, every fifteen seconds.
         while True:
+            if self.comm_pipe.poll():
+                t = self.comm_pipe.recv()
+                if t == 'terminate':
+                    self.l.info(
+                        'Caught termination signal in {name}. Killing merger '
+                        'and exiting.'.format(name=name))
+                    self.merger_pipe.send('terminate')
+                    self.publisher.publish_poller_status(status='TERMINATING')
+                    self.merger.join()
+                    self.l.info('{name} merger killed, poller shutting '
+                                'down.'.format(name=name))
+                    self.publisher.publish_poller_status(status='SHUTDOWN')
+                    return
+            self.publisher.publish_poller_heartbeat()
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
@@ -92,7 +119,7 @@ class GithubPoller(MergebotPoller):
                 continue
             for pull in prs:
                 self.check_pr(pull)
-            time.sleep(15)
+            time.sleep(self.POLL_WAIT)
 
     def check_pr(self, pull):
         """Determines if a pull request should be evaluated.
@@ -130,20 +157,17 @@ class GithubPoller(MergebotPoller):
         # FUTURE: Look for @merge-bot reply comments.
         # FUTURE: Use mentions API instead?
         if not cmt_body.startswith('@{}'.format(BOT_NAME)):
-            self.l.info('Last comment not a command. Moving on. Comment: ')
-            self.l.info(cmt_body)
+            self.l.info(
+                'Last comment not a command. Moving on. Comment: {cmt}'.format(
+                    cmt=cmt_body))
             return True
         # Check auth.
         user = cmt.get_user()
-        if user not in AUTHORIZED_USERS:
+        if user not in self.authorized_users:
             log_error = 'Unauthorized user "{user}" attempted command "{com}".'
             pr_error = 'User {user} not a committer; access denied.'
             self.l.warning(log_error.format(user=user, com=cmt_body))
-            try:
-                pull.post_error(pr_error.format(user=user))
-            except EnvironmentError as err:
-                self.l.error('Error posting comment: {err}.'.format(err=err))
-                return False
+            pull.post_error(content=pr_error.format(user=user), logger=self.l)
             return True
         cmd_str = cmt_body.split('@{} '.format(BOT_NAME), 1)[1]
         cmd = cmd_str.split(' ')[0]
@@ -151,11 +175,8 @@ class GithubPoller(MergebotPoller):
             self.l.warning('Command was {}, not a valid command.'.format(cmd))
             # Post back to PR
             error = 'Command was {}, not a valid command. Valid commands: {}.'
-            try:
-                pull.post_error(error.format(cmd, self.COMMANDS.keys()))
-            except EnvironmentError as err:
-                self.l.error('Error posting comment: {err}.'.format(err=err))
-                return False
+            pull.post_error(content=error.format(cmd, self.COMMANDS.keys()),
+                            logger=self.l)
             return True
         return self.COMMANDS[cmd](pull)
 
@@ -172,5 +193,8 @@ class GithubPoller(MergebotPoller):
             contract with search_github_pr since other commands could fail.
         """
         self.l.info('Command was merge, adding to merge queue.')
+        pull.post_info('Adding PR to work queue; current position: '
+                       '{pos}.'.format(pos=self.work_queue.qsize() + 1), self.l)
+        self.publisher.publish_enqueue(item_id=pull.get_num())
         self.work_queue.put(pull)
         return True

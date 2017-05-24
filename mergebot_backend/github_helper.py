@@ -11,7 +11,7 @@ GITHUB_REPO_FMT_URL = GITHUB_API_ROOT + '/repos/{0}/{1}/'
 GITHUB_PULLS_ENDPOINT = 'pulls'
 
 BOT_NAME = 'apache-merge-bot'
-GITHUB_SECRET = '../../github_auth/mergebot.secret'
+GITHUB_SECRET = 'mergebot.secret'
 
 
 class GithubHelper(object):
@@ -20,7 +20,7 @@ class GithubHelper(object):
 
     def __init__(self, org, repo):
         self.repo_url = GITHUB_REPO_FMT_URL.format(org, repo)
-        with open(GITHUB_SECRET, 'r') as key_file:
+        with open(GITHUB_SECRET) as key_file:
             self.bot_key = key_file.read().strip()
 
     def fetch_prs(self):
@@ -40,7 +40,6 @@ class GithubHelper(object):
             return [], 'Request timed out: {}'.format(exc)
         except RequestException as exc:
             return [], 'Catastrophic error in requests: {}'.format(exc)
-        return [], 'Unreachable Error'
 
     def get(self, endpoint):
         """get makes a GET request against a specified endpoint.
@@ -97,6 +96,7 @@ class GithubPR(object):
     def __init__(self, helper, pr_object):
         self.helper = helper
         self.pr_num = pr_object['number']
+        self.head_sha = pr_object['head']['sha']
         self.comments_url = pr_object['comments_url']
         self.updated = dateutil.parser.parse(pr_object['updated_at'])
 
@@ -107,6 +107,14 @@ class GithubPR(object):
             pull request number.
         """
         return self.pr_num
+
+    def get_head_sha(self):
+        """Gets the SHA corresponding to the commit at HEAD.
+
+        Returns:
+            HEAD SHA
+        """
+        return self.head_sha
 
     def get_updated(self):
         """Gets datetime of when the pull request was last updated.
@@ -128,39 +136,36 @@ class GithubPR(object):
             return [GithubComment(cmt) for cmt in comments]
         return []
 
-    def post_error(self, content):
+    def post_error(self, content, logger):
         """Posts an error as a comment to Github.
 
         Args:
             content: the content to post.
-        Raises:
-            EnvironmentError: If post to Github failed.
+            logger: logger to send error to if post fails.
         """
-        self.post_pr_comment('Error: {}.'.format(content))
+        self.post_pr_comment('Error: {}'.format(content), logger)
 
-    def post_info(self, content):
+    def post_info(self, content, logger):
         """Posts an info-level message as a comment to Github.
 
         Args:
             content: the content to post.
-        Raises:
-            EnvironmentError: If post to Github failed.
+            logger: logger to send error to if post fails.
         """
-        self.post_pr_comment('Info: {}.'.format(content))
+        self.post_pr_comment('Info: {}'.format(content), logger)
 
-    def post_pr_comment(self, content):
+    def post_pr_comment(self, content, logger):
         """Posts a PR comment to Github.
 
         Args:
             content: the content to post.
-        Raises:
-            EnvironmentError: If post to Github failed.
+            logger: logger to send error to if post fails.
         """
         err = self.helper.post(content, self.comments_url)
         if err is not None:
-            # TODO(jasonkuster): Create a custom error to raise here.
-            raise EnvironmentError(
-                "Couldn't post to Github: {err}.".format(err=err))
+            logger.error(
+                "Couldn't post comment '{cmt}' to Github: {err}.".format(
+                    cmt=content, err=err))
 
 
 class GithubComment(object):

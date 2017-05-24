@@ -1,7 +1,9 @@
---- 
-merge_branch: master
-name: apache_beam
+--- !MergeBotConfig
+name: beam
 github_org: apache
-repository: incubator-beam
+repository: beam
+merge_branch: master
+verification_branch: mergebot
 scm_type: github
-verification_command: "mvn clean install"
+jenkins_location: https://builds.apache.org
+verification_job_name: beam_PreCommit_Merge
