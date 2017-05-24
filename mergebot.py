@@ -149,8 +149,8 @@ def poll_scm(config, pipe):
         config: A dictionary of configuration to use for the poller.
         pipe: Communication pipe for passing messages.
     """
-    poller = mergebot_poller.create_poller(config, pipe)
     try:
+        poller = mergebot_poller.create_poller(config, pipe)
         poller.poll()
     except BaseException as exc:
         l.error('Poller for {name} crashed with exception {exc}. Please '

@@ -16,6 +16,9 @@ class DBPublisher(object):
             name: Name of the project this component belongs to.
         """
         self.name = name
+        # This is necessary to ensure that the database connection we have is
+        # local to this thread -- connections should not be reused across
+        # threads.
         db.engine.dispose()
         db.create_scoped_session()
 
