@@ -64,7 +64,7 @@ class MergebotPoller(object):
         committers_json.raise_for_status()
         groups = json.loads(groups_json.content)
         committers = json.loads(committers_json.content)['map']
-        authorized_usernames = groups['groups'][self.config.name]['roster']
+        authorized_usernames = groups['groups'][self.config.proj_name]['roster']
         # Infra should have access in case they need to help fix things.
         authorized_usernames.extend(
             groups['groups']['infrastructure']['roster'])

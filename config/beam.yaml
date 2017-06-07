@@ -1,5 +1,6 @@
 --- !MergeBotConfig
-name: beam
+name: beam-main
+proj_name: beam
 github_org: apache
 repository: beam
 merge_branch: master
