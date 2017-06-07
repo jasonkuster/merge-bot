@@ -52,7 +52,7 @@ class MergebotPoller(object):
 
     def get_authorized_users(self):
         """Fetches the list of users allowed to command this poller.
-        
+
         Returns:
             List of GitHub usernames of committers for this project.
         """
