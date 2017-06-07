@@ -8,20 +8,23 @@ class WorkItemStatus(db.Model):
     item_id = db.Column(db.Integer)
     timestamp = db.Column(db.DateTime)
     status = db.Column(db.String(200))
+    info = db.Column(db.String(200))
 
-    def __init__(self, project_name, item_id, timestamp, status):
+    def __init__(self, project_name, item_id, timestamp, status, info):
         self.project_name = project_name
         self.item_id = item_id
         self.timestamp = timestamp
         self.status = status
+        self.info = info
 
     def __repr__(self):
         return ('Project: {proj}, Item ID: {item}, Status: {status}, '
-                'Timestamp: {timestamp}'.format(
+                'Timestamp: {timestamp}. Info: {info}'.format(
                     proj=self.project_name,
                     item=self.item_id,
                     status=self.status,
-                    timestamp=self.timestamp))
+                    timestamp=self.timestamp,
+                    info=self.info))
 
 
 class Poller(db.Model):

@@ -104,19 +104,21 @@ class DBPublisher(object):
         poller.timestamp = datetime.now()
         db.session.commit()
 
-    def publish_item_status(self, item_id, status):
+    def publish_item_status(self, item_id, status, info=None):
         """publish_item_status handles work item updates.
         
         Args:
             item_id: Unique work item identifier (e.g. PR number).
             status: Item status to update.
+            info: Additional info about the status update.
         """
         # TODO(jasonkuster): enum of item status?
         item_status = WorkItemStatus(
             project_name=self.name,
             item_id=item_id,
             timestamp=datetime.now(),
-            status=status)
+            status=status,
+            info=info)
         db.session.add(item_status)
         db.session.commit()
 

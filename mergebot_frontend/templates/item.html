@@ -16,6 +16,9 @@
                     <div class="clearfix"></div>
                 </div>
                 <div class="panel-body">
+                    {% if active.info %}
+                    <p>Info: {{ active.info }}</p>
+                    {% endif %}
                     Updated: {{ item.timestamp }}
                 </div>
             </div>

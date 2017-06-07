@@ -56,16 +56,31 @@ class MergebotPoller(object):
         Returns:
             List of GitHub usernames of committers for this project.
         """
-        # TODO(jasonkuster): Fetch canonical usernames from Gitbox.
         groups_json = requests.get(
             'https://people.apache.org/public/public_ldap_groups.json')
         groups_json.raise_for_status()
+        committers_json = requests.get(
+            'https://gitbox.apache.org/setup/ghmap.json')
+        committers_json.raise_for_status()
         groups = json.loads(groups_json.content)
-        authorized_users = groups['groups'][self.config.name]['roster']
+        committers = json.loads(committers_json.content)['map']
+        authorized_usernames = groups['groups'][self.config.proj_name]['roster']
         # Infra should have access in case they need to help fix things.
-        authorized_users.extend(groups['groups']['infra']['roster'])
+        authorized_usernames.extend(
+            groups['groups']['infrastructure']['roster'])
+
+        # Build map of Github ID : ASF ID
+        authorized_users = {}
+        for user in authorized_usernames:
+            try:
+                authorized_users[committers[user]] = user
+            except KeyError:
+                self.l.error(
+                    "Couldn't find Github username for user {user} in project "
+                    "{name}. If {user} is a committer, please link account via "
+                    "gitbox.a.o.".format(user=user, name=self.config.name))
         # For testing; remove in final version.
-        authorized_users.append(u'jasonkuster')
+        authorized_users[u'jasonkuster'] = u'jasonkuster'
         return authorized_users
 
     def poll(self):
@@ -92,10 +107,10 @@ class GithubPoller(MergebotPoller):
 
     def poll(self):
         """Kicks off polling of Github, searches PRs for commands, and runs."""
-        self.l.info('Starting poller for {}.'.format(self.config.name))
+        name = self.config.name
+        self.l.info('Starting poller for {}.'.format(name))
         self.publisher.publish_poller_status(status='STARTED')
         self.merger.start()
-        name = self.config.name
         # Loop: Forever, every fifteen seconds.
         while True:
             if self.comm_pipe.poll():
@@ -153,6 +168,7 @@ class GithubPoller(MergebotPoller):
         # committer before a committer requests a merge.
         cmt = comments[-1]
         cmt_body = cmt.get_body()
+        pull.metadata['comment_body'] = cmt_body
         # Look for committer request comment.
         # FUTURE: Look for @merge-bot reply comments.
         # FUTURE: Use mentions API instead?
@@ -163,12 +179,18 @@ class GithubPoller(MergebotPoller):
             return True
         # Check auth.
         user = cmt.get_user()
-        if user not in self.authorized_users:
+        pull.metadata['github_username'] = user
+        pull.metadata['created'] = cmt.get_created()
+        if user not in self.authorized_users.keys():
             log_error = 'Unauthorized user "{user}" attempted command "{com}".'
-            pr_error = 'User {user} not a committer; access denied.'
+            pr_error = ('User {user} not a committer on {name} or not '
+                        'registered in gitbox.apache.org; access denied.')
             self.l.warning(log_error.format(user=user, com=cmt_body))
-            pull.post_error(content=pr_error.format(user=user), logger=self.l)
+            pull.post_error(
+                content=pr_error.format(user=user, name=self.config.name),
+                logger=self.l)
             return True
+        pull.metadata['asf_id'] = self.authorized_users[user]
         cmd_str = cmt_body.split('@{} '.format(BOT_NAME), 1)[1]
         cmd = cmd_str.split(' ')[0]
         if cmd not in self.COMMANDS.keys():

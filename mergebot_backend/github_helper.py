@@ -99,6 +99,7 @@ class GithubPR(object):
         self.head_sha = pr_object['head']['sha']
         self.comments_url = pr_object['comments_url']
         self.updated = dateutil.parser.parse(pr_object['updated_at'])
+        self.metadata = {}
 
     def get_num(self):
         """Gets the pull request number.
@@ -175,6 +176,7 @@ class GithubComment(object):
     def __init__(self, cmt_object):
         self.user = cmt_object['user']['login']
         self.cmt_body = cmt_object['body'].encode('ascii', 'ignore')
+        self.created = cmt_object['created_at']
 
     def get_user(self):
         """Returns the user who posted the comment.
@@ -191,3 +193,11 @@ class GithubComment(object):
             comment body.
         """
         return self.cmt_body
+
+    def get_created(self):
+        """Returns the time the comment was created.
+        
+        Returns:
+            string of comment creation time.
+        """
+        return self.created

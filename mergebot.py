@@ -68,6 +68,7 @@ class MergeBotConfig(object):
     """Defines MergeBot configuration for a project."""
     def __init__(self,
                  name,
+                 proj_name,
                  github_org,
                  repository,
                  merge_branch,
@@ -76,6 +77,7 @@ class MergeBotConfig(object):
                  jenkins_location,
                  verification_job_name):
         self.name = name
+        self.proj_name = proj_name
         self.github_org = github_org
         self.repository = repository
         self.merge_branch = merge_branch
@@ -93,6 +95,7 @@ def mergebotconfig_constructor(loader, node):
     values = loader.construct_mapping(node)
     try:
         name = values['name']
+        proj_name = values['proj_name']
         github_org = values['github_org']
         repository = values['repository']
         merge_branch = values['merge_branch']
@@ -103,6 +106,7 @@ def mergebotconfig_constructor(loader, node):
     except KeyError as exc:
         raise yaml.YAMLError('problem with key {exc}'.format(exc=exc))
     return MergeBotConfig(name,
+                          proj_name,
                           github_org,
                           repository,
                           merge_branch,

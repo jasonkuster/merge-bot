@@ -19,6 +19,9 @@
                 </div>
                 <div class="panel-body">
                     <p>Status: {{ active.status }}</p>
+                    {% if active.info %}
+                    <p>Info: {{ active.info }}</p>
+                    {% endif %}
                     <p>Last Updated: {{ active.timestamp }}</p>
                 </div>
             </div>

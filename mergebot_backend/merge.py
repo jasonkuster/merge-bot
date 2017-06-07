@@ -179,7 +179,10 @@ class GitMerger(Merger):
                 'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
             self.merge_logger.info('{remaining} work items remaining.'.format(
                 remaining=self.work_queue.qsize()))
-            self.publisher.publish_item_status(item_id=pr_num, status='START')
+            self.publisher.publish_item_status(
+                item_id=pr_num, status='START',
+                info="Requested by {user} at {time}.".format(
+                    user=pr.metadata['asf_id'], time=pr.metadata['created']))
             try:
                 pr.post_info(
                     'MergeBot starting work on PR#{pr_num}.'.format(
@@ -191,7 +194,8 @@ class GitMerger(Merger):
                     'MergeBot encountered an unexpected error while processing '
                     'this PR: {exc}.'.format(exc=exc), self.merge_logger)
                 self.publisher.publish_item_status(
-                    item_id=pr_num, status='ERROR: {exc}'.format(exc=exc))
+                    item_id=pr_num, status='ERROR',
+                    info='Exception: {exc}'.format(exc=exc))
                 self.merge_logger.error('Unexpected exception while merging '
                                         'PR: {exc}.'.format(exc=exc))
             finally:
@@ -271,7 +275,8 @@ class GitMerger(Merger):
         except AssertionError as exc:
             pr.post_error(exc, pr_logger)
             self.publisher.publish_item_status(
-                item_id=pr_num, status='ERROR: {exc}'.format(exc=exc))
+                item_id=pr_num, status='ERROR',
+                info='Exception: {exc}'.format(exc=exc))
         finally:
             _clean_up(tmp_dir)
 
@@ -361,8 +366,8 @@ class GitMerger(Merger):
         pr.post_info(JENKINS_STARTED_MSG.format(build_url=build_url,
                                                 job_url=job_url), pr_logger)
         self.publisher.publish_item_status(
-            item_id=pr_num,
-            status='JOB_FOUND: {build_url}'.format(build_url=build_url))
+            item_id=pr_num, status='JOB_FOUND',
+            info='Build URL: {build_url}'.format(build_url=build_url))
         self.publisher.publish_item_status(item_id=pr_num, status='JOB_WAIT')
 
         while build.is_running():
