@@ -116,6 +116,9 @@ class GitMerger(Merger):
                 desc='Rebase against target branch.',
                 error='Automatic rebase failed. Please rebase branch against'
                 ' {branch_path} and try again.'),
+    ]
+
+    MERGE_COMMANDS = [
         Command('git checkout {branch_path}', desc='Check out target branch.',
                 error='Failed to check out {branch_path}. Please try again.'),
         Command('git merge --no-ff -m "{msg}" {pr_name}', desc='Merge PR',
@@ -146,6 +149,12 @@ class GitMerger(Merger):
     def __init__(self, config, work_queue, pipe):
         super(GitMerger, self).__init__(config, work_queue, pipe)
         remote_name = 'apache'
+        if self.config.prepare_command:
+            self.PREPARE_CMDS.append(
+                Command(self.config.prepare_command,
+                        desc='Custom preparation command.',
+                        error='Custom preparation command failed. Check logs '
+                              'for more information.'))
         self.common_vars = {
             'apache_url': self.APACHE_GIT.format(repo=self.config.repository),
             'branch': self.config.merge_branch,
@@ -301,6 +310,7 @@ class GitMerger(Merger):
         pr_logger.info('Beginning pre-verification phase.')
         self.publisher.publish_item_status(item_id=pr_num, status='PREPARE')
         run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
+        run_cmds(self.MERGE_COMMANDS, pr_vars, tmp_dir, pr_logger)
         pr_logger.info("Successfully finished pre-verification phase.")
 
         pr_logger.info("Starting verification phase.")
