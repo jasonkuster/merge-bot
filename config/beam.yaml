@@ -7,4 +7,5 @@ merge_branch: master
 verification_branch: mergebot
 scm_type: github
 jenkins_location: https://builds.apache.org
+prepare_command: ""
 verification_job_name: beam_PreCommit_Merge
