@@ -75,6 +75,7 @@ class MergeBotConfig(object):
                  verification_branch,
                  scm_type,
                  jenkins_location,
+                 prepare_command,
                  verification_job_name):
         self.name = name
         self.proj_name = proj_name
@@ -84,6 +85,7 @@ class MergeBotConfig(object):
         self.verification_branch = verification_branch
         self.scm_type = scm_type
         self.jenkins_location = jenkins_location
+        self.prepare_command = prepare_command
         self.verification_job_name = verification_job_name
 
 
@@ -102,6 +104,7 @@ def mergebotconfig_constructor(loader, node):
         verification_branch = values['verification_branch']
         scm_type = values['scm_type']
         jenkins_location = values['jenkins_location']
+        prepare_command = values['prepare_command']
         verification_job_name = values['verification_job_name']
     except KeyError as exc:
         raise yaml.YAMLError('problem with key {exc}'.format(exc=exc))
@@ -113,12 +116,13 @@ def mergebotconfig_constructor(loader, node):
                           verification_branch,
                           scm_type,
                           jenkins_location,
+                          prepare_command,
                           verification_job_name)
 
 
 def parse_configs():
     """Parses config files out of config/ directory.
-    
+
     Returns:
         Array of MergeBotConfig objects.
     """
@@ -163,7 +167,7 @@ def poll_scm(config, pipe):
 
 def start_pollers(configs):
     """start_pollers starts a set of pollers for specified configurations.
-    
+
     Args:
         configs: Configurations for the pollers.
 

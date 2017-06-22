@@ -95,7 +95,7 @@ class GitMerger(Merger):
     #     'repo_url': The url of the Github repository
     #     'pr_name': Pull request name
     #     'pr_num': Pull request number
-    PREPARE_CMDS = [
+    SETUP_CMDS = [
         Command('git clone -b {branch} {repo_url} .', desc='Clone',
                 error='Clone failed. Please try again.'),
         Command('git remote add {remote_name} {apache_url}', desc='Add Remote',
@@ -129,6 +129,8 @@ class GitMerger(Merger):
                       'Please try again.')
     ]
 
+    PREPARE_CMDS = []
+
     FINAL_CMDS = [
         Command('git push {remote_name} HEAD:{branch}',
                 desc='Push to remote master.',
@@ -146,6 +148,20 @@ class GitMerger(Merger):
     def __init__(self, config, work_queue, pipe):
         super(GitMerger, self).__init__(config, work_queue, pipe)
         remote_name = 'apache'
+        if self.config.prepare_command:
+            self.PREPARE_CMDS.append(
+                Command(self.config.prepare_command,
+                        desc='Custom preparation command: %s'.format(
+                            self.config.prepare_command),
+                        error='Custom preparation command failed. Check logs '
+                              'for more information.'))
+            self.PREPARE_CMDS.append(
+                Command('git diff --quiet && git diff --staged --quiet || '
+                        'git commit -am "Prepare repository for deployment."',
+                        desc='Add files created by repository preparation.',
+                        error='Adding files from repository preparation failed.'
+                              ' Please try again.',
+                        shell=True))
         self.common_vars = {
             'apache_url': self.APACHE_GIT.format(repo=self.config.repository),
             'branch': self.config.merge_branch,
@@ -299,8 +315,8 @@ class GitMerger(Merger):
         })
 
         pr_logger.info('Beginning pre-verification phase.')
-        self.publisher.publish_item_status(item_id=pr_num, status='PREPARE')
-        run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
+        self.publisher.publish_item_status(item_id=pr_num, status='SETUP')
+        run_cmds(self.SETUP_CMDS, pr_vars, tmp_dir, pr_logger)
         pr_logger.info("Successfully finished pre-verification phase.")
 
         pr_logger.info("Starting verification phase.")
@@ -319,7 +335,10 @@ class GitMerger(Merger):
                 'information.')
         pr_logger.info('Job verification succeeded.')
 
-        pr_logger.info('Starting final push.')
+        pr_logger.info('Starting final commands.')
+        if self.PREPARE_CMDS:
+            self.publisher.publish_item_status(item_id=pr_num, status='PREPARE')
+            run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
         self.publisher.publish_item_status(item_id=pr_num, status='MERGE')
         run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr_logger)
         pr.post_info('PR merge succeeded!', pr_logger)

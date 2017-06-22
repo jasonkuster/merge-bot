@@ -52,7 +52,7 @@ class MergebotPoller(object):
 
     def get_authorized_users(self):
         """Fetches the list of users allowed to command this poller.
-        
+
         Returns:
             List of GitHub usernames of committers for this project.
         """
@@ -67,7 +67,7 @@ class MergebotPoller(object):
         authorized_usernames = groups['groups'][self.config.proj_name]['roster']
         # Infra should have access in case they need to help fix things.
         authorized_usernames.extend(
-            groups['groups']['infrastructure']['roster'])
+            groups['groups']['infra']['roster'])
 
         # Build map of Github ID : ASF ID
         authorized_users = {}
