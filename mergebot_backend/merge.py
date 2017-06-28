@@ -139,7 +139,7 @@ class GitMerger(Merger):
                       'Please check logs and try again.'),
     ]
 
-    APACHE_GIT = 'https://git-wip-us.apache.org/repos/asf/{repo}.git'
+    APACHE_GIT = 'https://gitbox.apache.org/repos/asf/{repo}.git'
     GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
 
     JOB_START_TIMEOUT = 300
