@@ -14,7 +14,8 @@ import requests
 from mergebot_backend import db_publisher, github_helper, merge
 from mergebot_backend.log_helper import get_logger
 
-BOT_NAME = 'apache-merge-bot'
+BOT_NAME = 'asfgit'
+MERGEBOT_PROJ_URL = 'http://mergebot.apache.org/{name}'
 
 
 def create_poller(config, comm_pipe):
@@ -215,8 +216,15 @@ class GithubPoller(MergebotPoller):
             contract with search_github_pr since other commands could fail.
         """
         self.l.info('Command was merge, adding to merge queue.')
-        pull.post_info('Adding PR to work queue; current position: '
-                       '{pos}.'.format(pos=self.work_queue.qsize() + 1), self.l)
+        # pull.post_info('Adding PR to work queue; current position: '
+        #                '{pos}.'.format(pos=self.work_queue.qsize() + 1),
+        # self.l)
+        pull.post_commit_status(
+            state=github_helper.COMMIT_STATE_PENDING,
+            url=MERGEBOT_PROJ_URL.format(name=self.config.name),
+            description='In Queue',
+            context='MergeBot: Merge',
+            logger=self.l)
         self.publisher.publish_enqueue(item_id=pull.get_num())
         self.work_queue.put(pull)
         return True
