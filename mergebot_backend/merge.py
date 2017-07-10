@@ -212,10 +212,6 @@ class GitMerger(Merger):
                     description='Started Work',
                     context='MergeBot: Merge',
                     logger=self.merge_logger)
-                # pr.post_info(
-                #     'MergeBot starting work on PR#{pr_num}.'.format(
-                #         pr_num=pr_num),
-                #     self.merge_logger)
                 self.merge_git_pr(pr)
             except BaseException as exc:
                 pr.post_commit_status(
@@ -225,10 +221,13 @@ class GitMerger(Merger):
                     description='Unexpected Error: {exc}.'.format(exc=exc),
                     context='MergeBot: Merge',
                     logger=self.merge_logger)
-                # pr.post_error(
-                #     'MergeBot encountered an unexpected error while
-                # processing '
-                #     'this PR: {exc}.'.format(exc=exc), self.merge_logger)
+                # In the case of failure, we still post back to the pull request
+                # because otherwise if mergebot is stopped and restarted we will
+                # try this pull request again. If mergebot is modified to work
+                # with webhooks this can be removed.
+                pr.post_error(
+                    'MergeBot encountered an unexpected error while processing '
+                    'this PR: {exc}.'.format(exc=exc), self.merge_logger)
                 self.publisher.publish_item_status(
                     item_id=pr_num, status='ERROR',
                     info='Exception: {exc}'.format(exc=exc))
@@ -287,9 +286,12 @@ class GitMerger(Merger):
             description='MergeBot shutdown; resubmit when mergebot is back up.',
             context='MergeBot: Merge',
             logger=self.merge_logger)
-        # pr.post_info('MergeBot shutting down; please resubmit when MergeBot
-        # is '
-        #              'back up.', self.merge_logger)
+        # In the case of shutdown, we still post back to the pull request
+        # because otherwise if mergebot is stopped and restarted we will try
+        # this pull request again. If mergebot is modified to work with webhooks
+        #  this can be removed.
+        pr.post_info('MergeBot shutting down; please resubmit when MergeBot is '
+                     'back up.', self.merge_logger)
 
     def merge_git_pr(self, pr):
         """merge_git_pr takes care of the overall merge process for a PR.
@@ -324,7 +326,11 @@ class GitMerger(Merger):
                 description=exc.message,
                 context='MergeBot: Merge',
                 logger=self.merge_logger)
-            # pr.post_error(exc, pr_logger)
+            # In the case of failure, we still post back to the pull request
+            # because otherwise if mergebot is stopped and restarted we will
+            # try this pull request again. If mergebot is modified to work with
+            # webhooks this can be removed.
+            pr.post_error(exc, pr_logger)
             self.publisher.publish_item_status(
                 item_id=pr_num, status='ERROR',
                 info='Exception: {exc}'.format(exc=exc))
@@ -375,7 +381,11 @@ class GitMerger(Merger):
             self.publisher.publish_item_status(item_id=pr_num, status='PREPARE')
             run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
         self.publisher.publish_item_status(item_id=pr_num, status='MERGE')
-        run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr_logger)
+        # Success commit status needs to be posted before actual success because
+        # we lose the ability to update a commit status after the PR is closed.
+        # If FINAL_CMDS are not successful, we'll update the commit status with
+        # an error as part of the exception handling process, so the user won't
+        # see success turn into failure.
         pr.post_commit_status(
             state=github_helper.COMMIT_STATE_SUCCESS,
             url=MERGEBOT_ITEM_URL.format(
@@ -383,7 +393,7 @@ class GitMerger(Merger):
             description='Merge Succeeded!',
             context='MergeBot: Merge',
             logger=self.merge_logger)
-        # pr.post_info('PR merge succeeded!', pr_logger)
+        run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr_logger)
         pr_logger.info(
             'Merge for {pr_num} completed successfully.'.format(pr_num=pr_num))
 
@@ -436,8 +446,6 @@ class GitMerger(Merger):
         pr_logger.info("Build #{build_num} found.".format(build_num=build_num))
         build_url = urlparse.urljoin(job_url, str(build_num))
 
-        # pr.post_info(JENKINS_STARTED_MSG.format(build_url=build_url,
-        #                                         job_url=job_url), pr_logger)
         pr.post_commit_status(
             state=github_helper.COMMIT_STATE_PENDING,
             url=build_url,
