@@ -15,7 +15,7 @@ from mergebot_backend import db_publisher, github_helper, merge
 from mergebot_backend.log_helper import get_logger
 
 BOT_NAME = 'asfgit'
-MERGEBOT_PROJ_URL = 'http://mergebot.apache.org/{name}'
+MERGEBOT_PROJ_URL = 'http://mergebot-vm.apache.org/{name}'
 
 
 def create_poller(config, comm_pipe):
@@ -80,8 +80,6 @@ class MergebotPoller(object):
                     "Couldn't find Github username for user {user} in project "
                     "{name}. If {user} is a committer, please link account via "
                     "gitbox.a.o.".format(user=user, name=self.config.name))
-        # For testing; remove in final version.
-        authorized_users[u'jasonkuster'] = u'jasonkuster'
         return authorized_users
 
     def poll(self):
