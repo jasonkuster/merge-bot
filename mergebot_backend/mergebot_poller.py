@@ -214,9 +214,6 @@ class GithubPoller(MergebotPoller):
             contract with search_github_pr since other commands could fail.
         """
         self.l.info('Command was merge, adding to merge queue.')
-        # pull.post_info('Adding PR to work queue; current position: '
-        #                '{pos}.'.format(pos=self.work_queue.qsize() + 1),
-        # self.l)
         pull.post_commit_status(
             state=github_helper.COMMIT_STATE_PENDING,
             url=MERGEBOT_PROJ_URL.format(name=self.config.name),
