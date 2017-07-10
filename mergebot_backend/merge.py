@@ -16,6 +16,7 @@ from subprocess import check_call, check_output, STDOUT, CalledProcessError
 from threading import Thread
 
 from mergebot_backend import db_publisher
+from mergebot_backend import github_helper
 from mergebot_backend.log_helper import get_logger
 
 TMP_DIR_FMT = '/tmp/{dir}'
@@ -24,6 +25,7 @@ JENKINS_TIMEOUT_ERR = ('Timed out trying to find verification job. Check '
 JENKINS_STARTED_MSG = ('Job verification started. Verification job is [here]'
                        '({build_url}) (may still be pending; if page 404s, '
                        'check job status page [here]({job_url})).')
+MERGEBOT_ITEM_URL = 'http://mergebot-vm.apache.org/{name}/{number}'
 
 
 class Terminate(Exception):
@@ -190,6 +192,9 @@ class GitMerger(Merger):
                     return
                 time.sleep(1)
 
+            if not isinstance(pr, github_helper.GithubPR):
+                raise AttributeError
+
             pr_num = pr.get_num()
             self.merge_logger.info(
                 'Starting work on PR#{pr_num}.'.format(pr_num=pr_num))
@@ -200,12 +205,26 @@ class GitMerger(Merger):
                 info="Requested by {user} at {time}.".format(
                     user=pr.metadata['asf_id'], time=pr.metadata['created']))
             try:
-                pr.post_info(
-                    'MergeBot starting work on PR#{pr_num}.'.format(
-                        pr_num=pr_num),
-                    self.merge_logger)
+                pr.post_commit_status(
+                    state=github_helper.COMMIT_STATE_PENDING,
+                    url=MERGEBOT_ITEM_URL.format(
+                        name=self.config.name, number=pr_num),
+                    description='Started Work',
+                    context='MergeBot: Merge',
+                    logger=self.merge_logger)
                 self.merge_git_pr(pr)
             except BaseException as exc:
+                pr.post_commit_status(
+                    state=github_helper.COMMIT_STATE_ERROR,
+                    url=MERGEBOT_ITEM_URL.format(
+                        name=self.config.name, number=pr_num),
+                    description='Unexpected Error: {exc}.'.format(exc=exc),
+                    context='MergeBot: Merge',
+                    logger=self.merge_logger)
+                # In the case of failure, we still post back to the pull request
+                # because otherwise if mergebot is stopped and restarted we will
+                # try this pull request again. If mergebot is modified to work
+                # with webhooks this can be removed.
                 pr.post_error(
                     'MergeBot encountered an unexpected error while processing '
                     'this PR: {exc}.'.format(exc=exc), self.merge_logger)
@@ -260,6 +279,17 @@ class GitMerger(Merger):
         """
         pr = self.work_queue.get_nowait()
         self.publisher.publish_dequeue(item_id=pr.get_num())
+        pr.post_commit_status(
+            state=github_helper.COMMIT_STATE_ERROR,
+            url=MERGEBOT_ITEM_URL.format(
+                name=self.config.name, number=pr.get_num()),
+            description='MergeBot shutdown; resubmit when mergebot is back up.',
+            context='MergeBot: Merge',
+            logger=self.merge_logger)
+        # In the case of shutdown, we still post back to the pull request
+        # because otherwise if mergebot is stopped and restarted we will try
+        # this pull request again. If mergebot is modified to work with webhooks
+        #  this can be removed.
         pr.post_info('MergeBot shutting down; please resubmit when MergeBot is '
                      'back up.', self.merge_logger)
 
@@ -289,6 +319,17 @@ class GitMerger(Merger):
             _set_up(tmp_dir)
             self.execute_merge_lifecycle(pr, tmp_dir, pr_logger)
         except AssertionError as exc:
+            pr.post_commit_status(
+                state=github_helper.COMMIT_STATE_FAILURE,
+                url=MERGEBOT_ITEM_URL.format(
+                    name=self.config.name, number=pr.get_num()),
+                description=exc.message,
+                context='MergeBot: Merge',
+                logger=self.merge_logger)
+            # In the case of failure, we still post back to the pull request
+            # because otherwise if mergebot is stopped and restarted we will
+            # try this pull request again. If mergebot is modified to work with
+            # webhooks this can be removed.
             pr.post_error(exc, pr_logger)
             self.publisher.publish_item_status(
                 item_id=pr_num, status='ERROR',
@@ -340,8 +381,19 @@ class GitMerger(Merger):
             self.publisher.publish_item_status(item_id=pr_num, status='PREPARE')
             run_cmds(self.PREPARE_CMDS, pr_vars, tmp_dir, pr_logger)
         self.publisher.publish_item_status(item_id=pr_num, status='MERGE')
+        # Success commit status needs to be posted before actual success because
+        # we lose the ability to update a commit status after the PR is closed.
+        # If FINAL_CMDS are not successful, we'll update the commit status with
+        # an error as part of the exception handling process, so the user won't
+        # see success turn into failure.
+        pr.post_commit_status(
+            state=github_helper.COMMIT_STATE_SUCCESS,
+            url=MERGEBOT_ITEM_URL.format(
+                name=self.config.name, number=pr_num),
+            description='Merge Succeeded!',
+            context='MergeBot: Merge',
+            logger=self.merge_logger)
         run_cmds(self.FINAL_CMDS, pr_vars, tmp_dir, pr_logger)
-        pr.post_info('PR merge succeeded!', pr_logger)
         pr_logger.info(
             'Merge for {pr_num} completed successfully.'.format(pr_num=pr_num))
 
@@ -363,6 +415,15 @@ class GitMerger(Merger):
         pr_num = pr.get_num()
         self.publisher.publish_item_status(item_id=pr_num,
                                            status='WAIT_ON_JOB_START')
+        job_url = urlparse.urljoin(
+            self.config.jenkins_location, '/job/{job_name}/'.format(
+                job_name=self.config.verification_job_name))
+        pr.post_commit_status(
+            state=github_helper.COMMIT_STATE_PENDING,
+            url=job_url,
+            description='Starting verification job.',
+            context='MergeBot: Verification Job',
+            logger=self.merge_logger)
         while not build and wait_secs < self.JOB_START_TIMEOUT:
             try:
                 build = job.get_build(build_num)
@@ -372,18 +433,25 @@ class GitMerger(Merger):
                 time.sleep(self.WAIT_INTERVAL)
                 wait_secs += self.WAIT_INTERVAL
 
-        job_url = urlparse.urljoin(
-            self.config.jenkins_location, '/job/{job_name}/'.format(
-                job_name=self.config.verification_job_name))
         if not build:
             pr_logger.error('Timed out trying to find the verification job.')
+            pr.post_commit_status(
+                state=github_helper.COMMIT_STATE_ERROR,
+                url=job_url,
+                description='Timed out waiting for job start.',
+                context='MergeBot: Verification Job',
+                logger=self.merge_logger)
             raise AssertionError(JENKINS_TIMEOUT_ERR.format(url=job_url))
 
         pr_logger.info("Build #{build_num} found.".format(build_num=build_num))
         build_url = urlparse.urljoin(job_url, str(build_num))
 
-        pr.post_info(JENKINS_STARTED_MSG.format(build_url=build_url,
-                                                job_url=job_url), pr_logger)
+        pr.post_commit_status(
+            state=github_helper.COMMIT_STATE_PENDING,
+            url=build_url,
+            description='Verification job running.',
+            context='MergeBot: Verification Job',
+            logger=self.merge_logger)
         self.publisher.publish_item_status(
             item_id=pr_num, status='JOB_FOUND',
             info='Build URL: {build_url}'.format(build_url=build_url))
@@ -403,7 +471,19 @@ class GitMerger(Merger):
         # find job status anywhere on the object.
         build = job.get_build(build_num)
         if build.get_status() == "SUCCESS":
+            pr.post_commit_status(
+                state=github_helper.COMMIT_STATE_SUCCESS,
+                url=build_url,
+                description='Verification job succeeded!',
+                context='MergeBot: Verification Job',
+                logger=self.merge_logger)
             return True
+        pr.post_commit_status(
+            state=github_helper.COMMIT_STATE_FAILURE,
+            url=build_url,
+            description='Verification job failed.',
+            context='MergeBot: Verification Job',
+            logger=self.merge_logger)
         return False
 
 
