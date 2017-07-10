@@ -8,4 +8,4 @@ verification_branch: mergebot
 scm_type: github
 jenkins_location: https://builds.apache.org
 prepare_command: "bundle exec jekyll build"
-verification_job_name: beam_PreCommit_Merge_Site
+verification_job_name: beam_PreCommit_Website_Merge
