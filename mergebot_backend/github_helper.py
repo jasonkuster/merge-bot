@@ -24,8 +24,8 @@ COMMIT_STATUS_PAYLOAD = """
 """
 COMMIT_STATE_PENDING = 'pending'
 COMMIT_STATE_SUCCESS = 'success'
-COMMIT_STATE_ERROR = 'error'
-COMMIT_STATE_FAILURE = 'failure'
+COMMIT_STATE_ERROR = 'error' # error represents a problem with MergeBot.
+COMMIT_STATE_FAILURE = 'failure' # failure represents a problem with the PR.
 
 
 class GithubHelper(object):

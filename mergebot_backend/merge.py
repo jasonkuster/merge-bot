@@ -25,6 +25,7 @@ JENKINS_TIMEOUT_ERR = ('Timed out trying to find verification job. Check '
 JENKINS_STARTED_MSG = ('Job verification started. Verification job is [here]'
                        '({build_url}) (may still be pending; if page 404s, '
                        'check job status page [here]({job_url})).')
+MERGEBOT_MAIN_URL = 'http://mergebot-vm.apache.org/'
 MERGEBOT_ITEM_URL = 'http://mergebot-vm.apache.org/{name}/{number}'
 
 
@@ -241,7 +242,7 @@ class GitMerger(Merger):
 
     def fetch_from_queue(self):
         """fetch_from_queue tries to pull a PR off of the queue.
-        
+
         Raises:
             merge.Terminate if we receive the termination signal.
         Returns:
@@ -273,7 +274,7 @@ class GitMerger(Merger):
 
     def flush_queue(self):
         """flush_queue posts a shutdown message to a PR in the queue.
-        
+
         Raises:
             Queue.Empty if there is nothing in the queue.
         """
@@ -281,8 +282,7 @@ class GitMerger(Merger):
         self.publisher.publish_dequeue(item_id=pr.get_num())
         pr.post_commit_status(
             state=github_helper.COMMIT_STATE_ERROR,
-            url=MERGEBOT_ITEM_URL.format(
-                name=self.config.name, number=pr.get_num()),
+            url=MERGEBOT_MAIN_URL,
             description='MergeBot shutdown; resubmit when mergebot is back up.',
             context='MergeBot: Merge',
             logger=self.merge_logger)
