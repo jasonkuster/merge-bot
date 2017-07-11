@@ -125,6 +125,10 @@ class GithubPoller(MergebotPoller):
                     self.publisher.publish_poller_status(status='SHUTDOWN')
                     return
             self.publisher.publish_poller_heartbeat()
+            self.l.info('Refreshing authorized users.')
+            au = self.get_authorized_users()
+            if au:
+                self.authorized_users = au
             self.l.info('Polling Github for PRs')
             prs, err = self.github_helper.fetch_prs()
             if err is not None:
