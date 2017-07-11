@@ -51,10 +51,10 @@ class MergebotPoller(object):
         self.authorized_users = self.get_authorized_users()
 
     def get_authorized_users(self):
-        """Fetches the list of users allowed to command this poller.
+        """Fetches the users allowed to command this poller.
 
         Returns:
-            List of GitHub usernames of committers for this project.
+            Map of GitHub username to ASF ID of committers for this project.
         """
         groups_json = requests.get(
             'https://people.apache.org/public/public_ldap_groups.json')
