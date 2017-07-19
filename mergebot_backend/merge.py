@@ -145,7 +145,7 @@ class GitMerger(Merger):
     APACHE_GIT = 'https://gitbox.apache.org/repos/asf/{repo}.git'
     GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
 
-    JOB_START_TIMEOUT = 300
+    JOB_START_TIMEOUT = 600
     WAIT_INTERVAL = 10
 
     def __init__(self, config, work_queue, pipe):
