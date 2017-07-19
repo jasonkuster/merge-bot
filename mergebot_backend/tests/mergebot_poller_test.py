@@ -12,9 +12,10 @@ class GithubPollerTest(unittest.TestCase):
 
     def setUp(self):
         self.config = MergeBotConfig(
-            name='test', github_org='test', repository='test',
+            name='test', proj_name='test', github_org='test', repository='test',
             merge_branch='test', verification_branch='test', scm_type='github',
-            jenkins_location='http://test.test', verification_job_name='test')
+            jenkins_location='http://test.test', prepare_command='test',
+            verification_job_name='test')
 
     @patch('mergebot_backend.db_publisher.DBPublisher')
     @patch('mergebot_backend.github_helper.GithubHelper')
@@ -29,7 +30,7 @@ class GithubPollerTest(unittest.TestCase):
                                   mock_publisher):
         pipe = MagicMock()
         mock_pipe.return_value = (MagicMock(), MagicMock())
-        mock_authorized.return_value = ['authorized']
+        mock_authorized.return_value = {'authorized_gh': 'authorized_asf'}
         return mergebot_poller.GithubPoller(config=self.config, comm_pipe=pipe)
 
     @patch('mergebot_backend.mergebot_poller.GithubPoller')
@@ -142,15 +143,16 @@ class GithubPollerTest(unittest.TestCase):
         # Tests that a command by an unauthorized user is caught successfully.
         ghp = self.create_poller_for_testing()
         ghp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@apache-merge-bot command'
+        mock_comment.get_body.return_value = '@asfgit command'
         mock_comment.get_user.return_value = 'unauthorized'
         mock_pr.fetch_comments.return_value = [mock_comment]
         mock_pr.post_error.return_value = True
         search = ghp.search_github_pr(mock_pr)
         self.assertTrue(search)
-        mock_pr.post_error.assert_called_with(content="User unauthorized not a "
-                                              "committer; access denied.",
-                                              logger=ghp.l)
+        mock_pr.post_error.assert_called_with(
+            content="User unauthorized not a committer on test or not "
+                    "registered in gitbox.apache.org; access denied.",
+                    logger=ghp.l)
         self.assertEqual(mock_merge_git.call_count, 0)
 
     @patch('mergebot_backend.github_helper.GithubPR')
@@ -160,9 +162,9 @@ class GithubPollerTest(unittest.TestCase):
         # Tests that an invalid comment on a valid PR is caught successfully.
         ghp = self.create_poller_for_testing()
         ghp.merge_git = mock_merge_git
-        mock_comment.get_body.return_value = '@apache-merge-bot command'
-        mock_comment.get_user.return_value = 'authorized'
-        mergebot_poller.AUTHORIZED_USERS = ['authorized']
+        mock_comment.get_body.return_value = '@asfgit command'
+        mock_comment.get_user.return_value = 'authorized_gh'
+        ghp.authorized_users = {'authorized_gh': 'authorized_asf'}
         mock_pr.fetch_comments.return_value = [mock_comment]
         mock_pr.post_error.return_value = None
         search = ghp.search_github_pr(mock_pr)
@@ -180,9 +182,9 @@ class GithubPollerTest(unittest.TestCase):
         # Tests that valid commands are successfully piped through.
         ghp = self.create_poller_for_testing()
         ghp.COMMANDS['merge'] = mock_merge_git
-        mock_comment.get_body.return_value = '@apache-merge-bot merge'
-        mock_comment.get_user.return_value = 'authorized'
-        ghp.authorized_users = ['authorized']
+        mock_comment.get_body.return_value = '@asfgit merge'
+        mock_comment.get_user.return_value = 'authorized_gh'
+        ghp.authorized_users = {'authorized_gh': 'authorized_asf'}
         mock_pr.fetch_comments.return_value = [mock_comment]
         search = ghp.search_github_pr(mock_pr)
         self.assertTrue(search)

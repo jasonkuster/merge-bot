@@ -14,9 +14,10 @@ class MergeTest(unittest.TestCase):
 
     def setUp(self):
         self.config = MergeBotConfig(
-            name='test', github_org='test', repository='test',
+            name='test', proj_name='test', github_org='test', repository='test',
             merge_branch='test', verification_branch='test', scm_type='github',
-            jenkins_location='http://test.test', verification_job_name='test')
+            jenkins_location='http://test.test', prepare_command='test',
+            verification_job_name='test')
 
     @patch('mergebot_backend.db_publisher.DBPublisher')
     @patch('mergebot_backend.merge.get_logger')
@@ -135,8 +136,8 @@ class MergeTest(unittest.TestCase):
         mock_jenkins.return_value = {'test': mock_job}
         mock_verify.return_value = True
         gm.execute_merge_lifecycle(mock_pr, '/tmp', mock_logger)
-        self.assertEqual(gm.publisher.publish_item_status.call_count, 3)
-        self.assertEqual(mock_run_cmds.call_count, 3)
+        self.assertEqual(gm.publisher.publish_item_status.call_count, 4)
+        self.assertEqual(mock_run_cmds.call_count, 4)
 
     @patch('logging.Logger')
     @patch('mergebot_backend.github_helper.GithubPR')

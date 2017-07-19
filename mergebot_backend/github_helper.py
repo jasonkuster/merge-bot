@@ -13,6 +13,20 @@ GITHUB_PULLS_ENDPOINT = 'pulls'
 BOT_NAME = 'asfgit'
 GITHUB_SECRET = 'mergebot.secret'
 
+COMMENT_PAYLOAD = '{{"body": "{body}"}}'
+COMMIT_STATUS_PAYLOAD = """
+{{
+  "state": "{state}",
+  "target_url": "{url}",
+  "description": "{description}",
+  "context": "{context}"
+}}
+"""
+COMMIT_STATE_PENDING = 'pending'
+COMMIT_STATE_SUCCESS = 'success'
+COMMIT_STATE_ERROR = 'error' # error represents a problem with MergeBot.
+COMMIT_STATE_FAILURE = 'failure' # failure represents a problem with the PR.
+
 
 class GithubHelper(object):
     """GithubHelper is a lightweight authenticated wrapper for the Github API.
@@ -60,17 +74,16 @@ class GithubHelper(object):
             return resp.json()
         resp.raise_for_status()
 
-    def post(self, content, endpoint):
+    def post(self, payload, endpoint):
         """post makes a POST request against a specified endpoint.
 
         Args:
-            content: data to send in POST body.
+            payload: data to send in POST body.
             endpoint: URL to which to make the POST request. URL is relative
             to https://api.github.com/repos/{self.org}/{self.repo}/
         Returns:
             None if request returned successfully, error otherwise.
         """
-        payload = '{{"body": "{}"}}'.format(content)
         url = urlparse.urljoin(self.repo_url, endpoint)
         try:
             resp = requests.post(url, data=payload, auth=(BOT_NAME,
@@ -97,6 +110,7 @@ class GithubPR(object):
         self.helper = helper
         self.pr_num = pr_object['number']
         self.head_sha = pr_object['head']['sha']
+        self.statuses_url = pr_object['statuses_url']
         self.comments_url = pr_object['comments_url']
         self.updated = dateutil.parser.parse(pr_object['updated_at'])
         self.metadata = {}
@@ -155,6 +169,37 @@ class GithubPR(object):
         """
         self.post_pr_comment('Info: {}'.format(content), logger)
 
+    def post_commit_status(self, state, url, description, context, logger):
+        """ Posts a commit status update to this PR.
+
+        Args:
+            state: State for status; can be 'pending', 'success', 'error', or
+              'failure'.
+            url: URL at which more information can be found.
+            description: Description to show on commit status.
+            context: Unique name for this particular status line.
+            logger: Logger to use for reporting failure.
+        """
+        payload = COMMIT_STATUS_PAYLOAD.format(
+            state=state,
+            url=url,
+            description=description,
+            context=context
+        )
+        err = self.helper.post(payload, self.statuses_url)
+        if err:
+            logger.error(
+                "Couldn't set commit status for pr {pr_num}: {err}. Context: "
+                "{context}, State: {state}, Description: {description}, URL: "
+                "{url}. Falling back to posting a comment.".format(
+                    pr_num=self.pr_num, err=err, context=context, state=state,
+                    description=description, url=url))
+            self.post_pr_comment(
+                '{context}: PR {pr_num} in state {state} with description '
+                '{description}. URL: {url}.'.format(
+                    context=context, pr_num=self.pr_num, state=state,
+                    description=description, url=url), logger)
+
     def post_pr_comment(self, content, logger):
         """Posts a PR comment to Github.
 
@@ -162,7 +207,8 @@ class GithubPR(object):
             content: the content to post.
             logger: logger to send error to if post fails.
         """
-        err = self.helper.post(content, self.comments_url)
+        payload = COMMENT_PAYLOAD.format(body=content)
+        err = self.helper.post(payload, self.comments_url)
         if err is not None:
             logger.error(
                 "Couldn't post comment '{cmt}' to Github: {err}.".format(
