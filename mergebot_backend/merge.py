@@ -160,7 +160,7 @@ class GitMerger(Merger):
                               'for more information.'))
             self.PREPARE_CMDS.append(
                 Command('git diff --quiet && git diff --staged --quiet || '
-                        'git commit -am "Prepare repository for deployment."',
+                        'git add -A && git commit -am "Prepare repository for deployment."',
                         desc='Add files created by repository preparation.',
                         error='Adding files from repository preparation failed.'
                               ' Please try again.',
