@@ -67,6 +67,7 @@ class MergebotPoller(object):
         except Exception as e:
             self.l.error("Failed to retrieve authorized users: {err}; using old"
                          " authorized user list.".format(err=e))
+            return self.authorized_users
         groups = json.loads(groups_json.content)
         committers = json.loads(committers_json.content)['map']
         authorized_usernames = groups['groups'][self.config.proj_name]['roster']
