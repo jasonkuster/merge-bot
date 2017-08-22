@@ -57,12 +57,17 @@ class MergebotPoller(object):
         Returns:
             Map of GitHub username to ASF ID of committers for this project.
         """
-        groups_json = requests.get(
-            'https://people.apache.org/public/public_ldap_groups.json')
-        groups_json.raise_for_status()
-        committers_json = requests.get(
-            'https://gitbox.apache.org/setup/ghmap.json')
-        committers_json.raise_for_status()
+        try:
+            groups_json = requests.get(
+                'https://people.apache.org/public/public_ldap_groups.json')
+            groups_json.raise_for_status()
+            committers_json = requests.get(
+                'https://gitbox.apache.org/setup/ghmap.json')
+            committers_json.raise_for_status()
+        except Exception as e:
+            self.l.error("Failed to retrieve authorized users: {err}; using old"
+                         " authorized user list.".format(err=e))
+            return self.authorized_users
         groups = json.loads(groups_json.content)
         committers = json.loads(committers_json.content)['map']
         authorized_usernames = groups['groups'][self.config.proj_name]['roster']
