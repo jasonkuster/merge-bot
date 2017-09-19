@@ -139,6 +139,26 @@ class GithubPollerTest(unittest.TestCase):
     @patch('mergebot_backend.github_helper.GithubPR')
     @patch('mergebot_backend.github_helper.GithubComment')
     @patch('mergebot_backend.mergebot_poller.GithubPoller.merge_git')
+    def testSearchAuthFailure(self, mock_merge_git, mock_comment, mock_pr):
+        # Tests that a command by an unauthorized user is caught successfully.
+        ghp = self.create_poller_for_testing()
+        ghp.merge_git = mock_merge_git
+        mock_comment.get_body.return_value = '@asfgit command'
+        mock_comment.get_user.return_value = 'unknown'
+        mock_pr.fetch_comments.return_value = [mock_comment]
+        mock_pr.post_error.return_value = True
+        search = ghp.search_github_pr(mock_pr)
+        self.assertTrue(search)
+        mock_pr.post_error.assert_called_with(
+            content="Mergebot couldn't fetch the list of authorized "
+                    "users from Apache; check people.apache.org and "
+                    "gitbox.apache.org for downtime.",
+                    logger=ghp.l)
+        self.assertEqual(mock_merge_git.call_count, 0)
+
+    @patch('mergebot_backend.github_helper.GithubPR')
+    @patch('mergebot_backend.github_helper.GithubComment')
+    @patch('mergebot_backend.mergebot_poller.GithubPoller.merge_git')
     def testSearchUnauthorizedUser(self, mock_merge_git, mock_comment, mock_pr):
         # Tests that a command by an unauthorized user is caught successfully.
         ghp = self.create_poller_for_testing()
