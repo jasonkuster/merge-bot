@@ -142,6 +142,7 @@ class GithubPollerTest(unittest.TestCase):
     def testSearchAuthFailure(self, mock_merge_git, mock_comment, mock_pr):
         # Tests that a command by an unauthorized user is caught successfully.
         ghp = self.create_poller_for_testing()
+        ghp.authorized_users = {}
         ghp.merge_git = mock_merge_git
         mock_comment.get_body.return_value = '@asfgit command'
         mock_comment.get_user.return_value = 'unknown'
