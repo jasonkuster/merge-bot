@@ -59,14 +59,17 @@ class MergebotPoller(object):
         """
         try:
             groups_json = requests.get(
-                'https://people.apache.org/public/public_ldap_groups.json')
+                'https://people.apache.org/public/public_ldap_groups.json',
+                timeout=5)
             groups_json.raise_for_status()
             committers_json = requests.get(
-                'https://gitbox.apache.org/setup/ghmap.json')
+                'https://gitbox.apache.org/setup/ghmap.json', timeout=5)
             committers_json.raise_for_status()
         except Exception as e:
             self.l.error("Failed to retrieve authorized users: {err}; using old"
                          " authorized user list.".format(err=e))
+            if not hasattr(self, 'authorized_users'):
+                self.authorized_users = {}
             return self.authorized_users
         groups = json.loads(groups_json.content)
         committers = json.loads(committers_json.content)['map']
@@ -190,9 +193,17 @@ class GithubPoller(MergebotPoller):
         pull.metadata['github_username'] = user
         pull.metadata['created'] = cmt.get_created()
         if user not in self.authorized_users.keys():
-            log_error = 'Unauthorized user "{user}" attempted command "{com}".'
-            pr_error = ('User {user} not a committer on {name} or not '
-                        'registered in gitbox.apache.org; access denied.')
+            if not self.authorized_users:
+                log_error = ('Empty auth list; people.a.o or gitbox.a.o must '
+                             'be having problems.')
+                pr_error = ("Mergebot couldn't fetch the list of authorized "
+                            "users from Apache; check people.apache.org and "
+                            "gitbox.apache.org for downtime.")
+            else:
+                log_error = ('Unauthorized user "{user}" attempted command '
+                             '"{com}".')
+                pr_error = ('User {user} not a committer on {name} or not '
+                            'registered in gitbox.apache.org; access denied.')
             self.l.warning(log_error.format(user=user, com=cmt_body))
             pull.post_error(
                 content=pr_error.format(user=user, name=self.config.name),
