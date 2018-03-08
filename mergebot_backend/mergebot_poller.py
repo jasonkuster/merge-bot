@@ -15,7 +15,7 @@ from mergebot_backend import db_publisher, github_helper, merge
 from mergebot_backend.log_helper import get_logger
 
 BOT_NAME = 'asfgit'
-MERGEBOT_PROJ_URL = 'http://mergebot-vm.apache.org/{name}'
+MERGEBOT_PROJ_URL = 'http://mergebot-vm2.apache.org:8080/{name}'
 
 
 def create_poller(config, comm_pipe):

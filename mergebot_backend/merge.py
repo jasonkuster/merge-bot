@@ -25,8 +25,8 @@ JENKINS_TIMEOUT_ERR = ('Timed out trying to find verification job. Check '
 JENKINS_STARTED_MSG = ('Job verification started. Verification job is [here]'
                        '({build_url}) (may still be pending; if page 404s, '
                        'check job status page [here]({job_url})).')
-MERGEBOT_MAIN_URL = 'http://mergebot-vm.apache.org/'
-MERGEBOT_ITEM_URL = 'http://mergebot-vm.apache.org/{name}/{number}'
+MERGEBOT_MAIN_URL = 'http://mergebot-vm2.apache.org:8080/'
+MERGEBOT_ITEM_URL = 'http://mergebot-vm2.apache.org:8080/{name}/{number}'
 
 
 class Terminate(Exception):
@@ -145,7 +145,7 @@ class GitMerger(Merger):
     APACHE_GIT = 'https://gitbox.apache.org/repos/asf/{repo}.git'
     GITHUB_REPO_URL = 'https://github.com/{org}/{repo}.git'
 
-    JOB_START_TIMEOUT = 600
+    JOB_START_TIMEOUT = 1800
     WAIT_INTERVAL = 10
 
     def __init__(self, config, work_queue, pipe):
