@@ -83,9 +83,10 @@ which they were received. Merges proceed in a few phases.
     (currently Jenkins) for test. `merge.py` polls the CI system for the test
     results until results are available.
 *   `PREPARE`: `merge.py` runs any commands necessary to prepare the PR for
-    being merged with the mainline repository. For example, `beam-site` has
-    MergeBot generate the appropriate HTML from the markdown pages checked in as
-    part of the PR.
+    being merged with the mainline repository. For example, `beam-site`
+    previously had MergeBot
+    [generate the appropriate HTML from the markdown pages](https://github.com/jasonkuster/merge-bot/blob/90c0f45a09afb72d88e0a580ab3f071a7017d9b3/config/beam-site.yaml#L10)
+    checked in as part of the PR.
 *   `MERGE`: MergeBot pushes the changes to the upstream repository.
 
 All of these phases are communicated via `WorkItemStatus` updates.
